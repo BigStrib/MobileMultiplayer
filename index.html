@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MultiView</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <!-- Triple-tap top-right to open URL modal -->
+    <div id="secretZone"></div>
+
+    <!-- Video grid -->
+    <main id="grid" class="grid" data-count="2"></main>
+
+    <!-- Bottom control panel -->
+    <div id="panel" class="panel hidden">
+        <div class="panel-drag" id="panelDrag"></div>
+
+        <div class="panel-head">
+            <div class="panel-info">
+                <span class="panel-slot" id="panelSlot">Slot 1</span>
+                <span class="panel-plat" id="panelPlat">YouTube</span>
+            </div>
+            <button class="icn-btn" id="panelX" aria-label="Close">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+
+        <!-- Playback (YT + direct only) -->
+        <div class="p-row" id="rowPlay">
+            <button class="icn-btn" id="bRew" aria-label="Back 10s">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="15.5" text-anchor="middle" font-size="7" font-weight="700">10</text></svg>
+            </button>
+            <button class="icn-btn icn-lg" id="bPlay" aria-label="Play/Pause">
+                <svg class="pp-play" width="32" height="32" viewBox="0 0 24 24" fill="#fff"><polygon points="6,3 20,12 6,21"/></svg>
+                <svg class="pp-pause hide" width="32" height="32" viewBox="0 0 24 24" fill="#fff"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+            </button>
+            <button class="icn-btn" id="bFwd" aria-label="Forward 10s">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M12.01 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/><text x="12" y="15.5" text-anchor="middle" font-size="7" font-weight="700">10</text></svg>
+            </button>
+        </div>
+
+        <!-- Seek bar (YT + direct only) -->
+        <div class="p-row" id="rowSeek">
+            <span class="tm" id="tNow">0:00</span>
+            <div class="slider" id="sSeek">
+                <div class="sl-track"></div>
+                <div class="sl-buf" id="sBuf"></div>
+                <div class="sl-fill" id="sFill"></div>
+                <div class="sl-knob" id="sKnob"></div>
+            </div>
+            <span class="tm" id="tEnd">0:00</span>
+        </div>
+
+        <!-- Volume — ALWAYS visible for ALL platforms -->
+        <div class="p-row" id="rowVol">
+            <button class="icn-btn" id="bMute" aria-label="Mute">
+                <svg class="vol-on" width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16.5 12A4.5 4.5 0 0 0 14 8v8a4.47 4.47 0 0 0 2.5-4z"/><path d="M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                <svg class="vol-off hide" width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M4.34 2.93L2.93 4.34 7.29 8.7 7 9H3v6h4l5 5v-6.59l4.18 4.18c-.65.49-1.38.88-2.18 1.11v2.06a8.94 8.94 0 0 0 3.61-1.75l2.05 2.05 1.41-1.41L4.34 2.93zM12 4l-2.68 2.68L12 9.31V4zm7 8c0 .94-.2 1.82-.54 2.64l1.5 1.5A8.94 8.94 0 0 0 21 12c0-4.28-3-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71z"/></svg>
+            </button>
+            <div class="slider" id="sVol">
+                <div class="sl-track"></div>
+                <div class="sl-fill" id="vFill"></div>
+                <div class="sl-knob" id="vKnob"></div>
+            </div>
+            <span class="vol-num" id="vNum">0%</span>
+        </div>
+
+        <!-- Actions -->
+        <div class="p-row p-actions">
+            <button class="act-btn act-red" id="bRemove">Remove</button>
+            <button class="act-btn" id="bSwap">Swap Position</button>
+        </div>
+    </div>
+
+    <!-- Swap overlay -->
+    <div id="swapOv" class="swap-ov hidden">
+        <div class="swap-box">
+            <div class="swap-txt">Tap the slot to swap with</div>
+            <button class="act-btn" id="swapNo">Cancel</button>
+        </div>
+    </div>
+
+    <!-- URL Modal -->
+    <div id="modal" class="modal hidden">
+        <div class="modal-bg" id="modalBg"></div>
+        <div class="modal-sheet">
+            <div class="modal-pill"></div>
+            <div class="modal-top">
+                <h2>Add Videos</h2>
+                <button class="icn-btn" id="modalX" aria-label="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <div id="urlList"></div>
+                <button class="add-btn" id="addRow">+ Add Another Slot</button>
+            </div>
+            <div class="modal-bot">
+                <div class="grid-pick">
+                    <span class="grid-label">Grid</span>
+                    <div class="grid-opts" id="gridOpts">
+                        <button class="g-btn active" data-n="2">2</button>
+                        <button class="g-btn" data-n="4">4</button>
+                        <button class="g-btn" data-n="6">6</button>
+                    </div>
+                </div>
+                <button class="load-btn" id="loadBtn">Load Videos</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="script.js"></script>
+</body>
+</html>
