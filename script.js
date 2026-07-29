@@ -1,4 +1,4 @@
-// app.js - Mobile MultiView Player with Netflix-Style Dark Red Theme
+// script.js - Advanced Mobile MultiView with Mute Control
 
 "use strict";
 
@@ -28,6 +28,27 @@ const addEmbedBtn = document.getElementById("addEmbedBtn");
 let zIndex = 100;
 let activeWindow = null;
 let activeDrag = null;
+let dragOverlay = null;
+
+// Create drag overlay
+function createDragOverlay() {
+  if (!dragOverlay) {
+    dragOverlay = document.createElement("div");
+    dragOverlay.id = "drag-overlay";
+    document.body.appendChild(dragOverlay);
+  }
+  return dragOverlay;
+}
+
+function showDragOverlay() {
+  createDragOverlay().classList.add("active");
+}
+
+function hideDragOverlay() {
+  if (dragOverlay) {
+    dragOverlay.classList.remove("active");
+  }
+}
 
 // ========================
 // Sidebar
@@ -89,6 +110,141 @@ function safeParseURL(raw) {
 
 function getPathParts(urlObj) {
   return urlObj.pathname.split("/").filter(Boolean);
+}
+
+// ========================
+// Advanced Mute Controller
+// ========================
+
+class MuteController {
+  constructor(win) {
+    this.win = win;
+    this.provider = win.dataset.provider;
+    this.isMuted = false;
+    this.muteBtn = null;
+  }
+
+  setMuteButton(btn) {
+    this.muteBtn = btn;
+  }
+
+  async mute() {
+    const content = this.win.querySelector(".video-frame-container");
+    if (!content) return;
+
+    const iframe = content.querySelector("iframe");
+    if (!iframe) return;
+
+    if (this.provider === "youtube") {
+      this.muteYouTube(iframe);
+    } else if (this.provider.startsWith("twitch")) {
+      this.muteOrUnmuteTwitch(iframe);
+    } else if (this.provider === "kick") {
+      this.muteKick(iframe);
+    } else if (this.provider === "rumble") {
+      this.muteRumble(iframe);
+    }
+
+    this.isMuted = !this.isMuted;
+    this.updateMuteIcon();
+  }
+
+  muteYouTube(iframe) {
+    try {
+      const volume = this.isMuted ? 100 : 0;
+      if (iframe.contentWindow && iframe.contentWindow.postMessage) {
+        iframe.contentWindow.postMessage({
+          event: "command",
+          func: this.isMuted ? "unMute" : "mute",
+          args: []
+        }, "*");
+      }
+    } catch (e) {
+      console.log("YouTube mute API not available");
+      this.fallbackMute(iframe);
+    }
+  }
+
+  muteOrUnmuteTwitch(iframe) {
+    try {
+      const div = iframe.parentElement;
+      if (!div) return;
+
+      // Try to find volume control in Twitch player
+      const volumeControl = div.querySelector('[data-a-target="player-volume-slider"]');
+      if (volumeControl) {
+        const muteBtn = div.querySelector('[data-a-target="player-volume-button"]');
+        if (muteBtn) {
+          muteBtn.click();
+          return;
+        }
+      }
+
+      // Fallback: adjust opacity for visual indicator
+      iframe.style.opacity = this.isMuted ? "1" : "0.5";
+    } catch (e) {
+      console.log("Twitch mute control error:", e);
+      this.fallbackMute(iframe);
+    }
+  }
+
+  muteKick(iframe) {
+    try {
+      const div = iframe.parentElement;
+      if (!div) return;
+
+      // Try to find volume control in Kick player
+      const volumeBtn = div.querySelector('[aria-label*="mute"], [aria-label*="Mute"], [data-testid*="volume"]');
+      if (volumeBtn) {
+        volumeBtn.click();
+        return;
+      }
+
+      // Fallback: opacity
+      iframe.style.opacity = this.isMuted ? "1" : "0.5";
+    } catch (e) {
+      console.log("Kick mute control error:", e);
+      this.fallbackMute(iframe);
+    }
+  }
+
+  muteRumble(iframe) {
+    try {
+      const div = iframe.parentElement;
+      if (!div) return;
+
+      // Try to find mute button in Rumble player
+      const muteBtn = div.querySelector('[data-video-mute], [aria-label*="Mute"], button[title*="Mute"]');
+      if (muteBtn) {
+        muteBtn.click();
+        return;
+      }
+
+      // Fallback: opacity
+      iframe.style.opacity = this.isMuted ? "1" : "0.5";
+    } catch (e) {
+      console.log("Rumble mute control error:", e);
+      this.fallbackMute(iframe);
+    }
+  }
+
+  fallbackMute(iframe) {
+    // Visual mute by reducing opacity
+    iframe.style.opacity = this.isMuted ? "1" : "0.4";
+    iframe.style.transition = "opacity 0.2s ease";
+  }
+
+  updateMuteIcon() {
+    if (!this.muteBtn) return;
+
+    if (this.isMuted) {
+      this.muteBtn.innerHTML = "🔇";
+      this.muteBtn.title = "Unmute";
+    } else {
+      this.muteBtn.innerHTML = "🔊";
+      this.muteBtn.title = "Mute";
+    }
+  }
 }
 
 // ========================
@@ -187,7 +343,7 @@ function buildEmbedUrl(info) {
 
   switch (provider) {
     case "youtube":
-      return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1`;
+      return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&enablejsapi=1`;
 
     case "twitch-live":
       return `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${TWITCH_PARENT}`;
@@ -214,7 +370,7 @@ function buildEmbedUrl(info) {
 // ========================
 
 function createVideoWindow(url, info) {
-  if (welcome.classList.contains("hidden") === false) {
+  if (!welcome.classList.contains("hidden")) {
     welcome.classList.add("hidden");
   }
 
@@ -232,6 +388,7 @@ function createVideoWindow(url, info) {
 
   win.dataset.url = url;
   win.dataset.provider = info.provider;
+  win.dataset.aspectRatio = 9 / 16;
 
   // Toolbar
   const toolbar = document.createElement("div");
@@ -250,8 +407,14 @@ function createVideoWindow(url, info) {
   copyBtn.innerHTML = "⧉";
   copyBtn.title = "Copy URL";
 
+  const muteBtn = document.createElement("button");
+  muteBtn.className = "toolbar-btn mute-btn";
+  muteBtn.innerHTML = "🔊";
+  muteBtn.title = "Mute";
+
   toolbarLeft.appendChild(moveBtn);
   toolbarLeft.appendChild(copyBtn);
+  toolbarLeft.appendChild(muteBtn);
 
   const toolbarCenter = document.createElement("div");
   toolbarCenter.className = "toolbar-group toolbar-center";
@@ -300,12 +463,27 @@ function createVideoWindow(url, info) {
   const content = document.createElement("div");
   content.className = "video-content";
 
+  const frameContainer = document.createElement("div");
+  frameContainer.className = "video-frame-container";
+
   const iframe = document.createElement("iframe");
   iframe.src = buildEmbedUrl(info);
   iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
   iframe.allowFullscreen = true;
 
-  content.appendChild(iframe);
+  frameContainer.appendChild(iframe);
+
+  const bottomControls = document.createElement("div");
+  bottomControls.className = "video-controls-bottom";
+
+  const volumeControl = document.createElement("button");
+  volumeControl.className = "video-control-btn";
+  volumeControl.innerHTML = "🔊";
+  volumeControl.title = "Mute/Unmute";
+
+  bottomControls.appendChild(volumeControl);
+  content.appendChild(frameContainer);
+  content.appendChild(bottomControls);
 
   // Confirm overlay
   const overlay = document.createElement("div");
@@ -342,99 +520,98 @@ function createVideoWindow(url, info) {
   win.appendChild(content);
   workspace.appendChild(win);
 
+  // Create mute controller
+  const muteController = new MuteController(win);
+  muteController.setMuteButton(muteBtn);
+
   // Events
-  attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirmNo, confirmYes, overlay, sizeInd);
+  attachWindowEvents(win, moveBtn, copyBtn, muteBtn, refreshBtn, closeBtn, confirmNo, confirmYes, overlay, sizeInd, muteController, volumeControl);
 
   closeSidebar();
 }
 
-function attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirmNo, confirmYes, overlay, sizeInd) {
+function attachWindowEvents(win, moveBtn, copyBtn, muteBtn, refreshBtn, closeBtn, confirmNo, confirmYes, overlay, sizeInd, muteController, volumeControl) {
   let isDragging = false;
   let isResizing = false;
   let startX, startY, startLeft, startTop, startWidth, startHeight, corner;
 
-  // Move
-  moveBtn.addEventListener("mousedown", (e) => {
+  // ===== MOVE (MOUSE & TOUCH) =====
+  moveBtn.addEventListener("mousedown", startDrag);
+  moveBtn.addEventListener("touchstart", startDrag);
+
+  function startDrag(e) {
     isDragging = true;
     activeWindow = win;
     win.style.zIndex = zIndex++;
     win.classList.add("moving");
 
     const rect = win.getBoundingClientRect();
-    startX = e.clientX - rect.left;
-    startY = e.clientY - rect.top;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    startX = clientX - rect.left;
+    startY = clientY - rect.top;
     startLeft = rect.left;
     startTop = rect.top;
 
     document.body.classList.add("dragging");
-    e.preventDefault();
-  });
+    showDragOverlay();
 
-  moveBtn.addEventListener("touchstart", (e) => {
-    isDragging = true;
-    activeWindow = win;
-    win.style.zIndex = zIndex++;
-    win.classList.add("moving");
+    if (e.touches) {
+      e.preventDefault();
+    } else {
+      e.preventDefault();
+    }
+  }
 
-    const touch = e.touches[0];
-    const rect = win.getBoundingClientRect();
-    startX = touch.clientX - rect.left;
-    startY = touch.clientY - rect.top;
-    startLeft = rect.left;
-    startTop = rect.top;
-
-    document.body.classList.add("dragging");
-    e.preventDefault();
-  });
-
-  // Resize
+  // ===== RESIZE (MOUSE & TOUCH) =====
   const handles = win.querySelectorAll(".resize-handle");
   handles.forEach(handle => {
-    handle.addEventListener("mousedown", (e) => {
-      isResizing = true;
-      activeWindow = win;
-      corner = handle.dataset.corner;
-      win.style.zIndex = zIndex++;
-      win.classList.add("resizing");
-
-      const rect = win.getBoundingClientRect();
-      startX = e.clientX;
-      startY = e.clientY;
-      startLeft = rect.left;
-      startTop = rect.top;
-      startWidth = rect.width;
-      startHeight = rect.height;
-
-      document.body.classList.add("dragging");
-      e.preventDefault();
-    });
-
-    handle.addEventListener("touchstart", (e) => {
-      isResizing = true;
-      activeWindow = win;
-      corner = handle.dataset.corner;
-      win.style.zIndex = zIndex++;
-      win.classList.add("resizing");
-
-      const touch = e.touches[0];
-      const rect = win.getBoundingClientRect();
-      startX = touch.clientX;
-      startY = touch.clientY;
-      startLeft = rect.left;
-      startTop = rect.top;
-      startWidth = rect.width;
-      startHeight = rect.height;
-
-      document.body.classList.add("dragging");
-      e.preventDefault();
-    });
+    handle.addEventListener("mousedown", startResize);
+    handle.addEventListener("touchstart", startResize);
   });
 
-  // Mouse/Touch move
-  document.addEventListener("mousemove", (e) => {
+  function startResize(e) {
+    isResizing = true;
+    activeWindow = win;
+    corner = e.currentTarget.dataset.corner;
+    win.style.zIndex = zIndex++;
+    win.classList.add("resizing");
+
+    const rect = win.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    startX = clientX;
+    startY = clientY;
+    startLeft = rect.left;
+    startTop = rect.top;
+    startWidth = rect.width;
+    startHeight = rect.height;
+
+    document.body.classList.add("dragging");
+    showDragOverlay();
+
+    if (e.touches) {
+      e.preventDefault();
+    } else {
+      e.preventDefault();
+    }
+  }
+
+  // ===== DRAG & RESIZE MOVEMENTS =====
+  document.addEventListener("mousemove", handleMove);
+  document.addEventListener("touchmove", handleMove);
+
+  function handleMove(e) {
+    if (!isDragging && !isResizing) return;
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
     if (isDragging && activeWindow === win) {
-      let newLeft = e.clientX - startX;
-      let newTop = e.clientY - startY;
+      let newLeft = clientX - startX;
+      let newTop = clientY - startY;
 
       const maxLeft = window.innerWidth - win.offsetWidth;
       const maxTop = window.innerHeight - win.offsetHeight;
@@ -447,9 +624,9 @@ function attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirm
     }
 
     if (isResizing && activeWindow === win) {
-      const aspect = parseFloat(win.dataset.aspectRatio) || 16 / 9;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
+      const aspect = 9 / 16;
+      const dx = clientX - startX;
+      const dy = clientY - startY;
 
       let newWidth = startWidth;
       let newHeight = startHeight;
@@ -493,68 +670,22 @@ function attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirm
         sizeInd.textContent = Math.round(newWidth) + " × " + Math.round(newHeight);
       }
     }
-  });
+  }
 
-  document.addEventListener("touchmove", (e) => {
-    if (isDragging && activeWindow === win) {
-      const touch = e.touches[0];
-      let newLeft = touch.clientX - startX;
-      let newTop = touch.clientY - startY;
+  // ===== END DRAG/RESIZE =====
+  document.addEventListener("mouseup", endAction);
+  document.addEventListener("touchend", endAction);
 
-      const maxLeft = window.innerWidth - win.offsetWidth;
-      const maxTop = window.innerHeight - win.offsetHeight;
-
-      newLeft = Math.max(0, Math.min(newLeft, maxLeft));
-      newTop = Math.max(0, Math.min(newTop, maxTop));
-
-      win.style.left = newLeft + "px";
-      win.style.top = newTop + "px";
-    }
-
-    if (isResizing && activeWindow === win) {
-      const touch = e.touches[0];
-      const aspect = 16 / 9;
-      const dx = touch.clientX - startX;
-
-      let newWidth = Math.max(240, startWidth + dx);
-      let newHeight = newWidth / aspect;
-      let newLeft = startLeft;
-
-      if (corner === "sw" || corner === "nw") {
-        newWidth = Math.max(240, startWidth - dx);
-        newHeight = newWidth / aspect;
-        newLeft = startLeft + startWidth - newWidth;
-      }
-
-      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - newWidth));
-
-      win.style.left = newLeft + "px";
-      win.style.width = newWidth + "px";
-      win.style.height = newHeight + "px";
-
-      if (sizeInd) {
-        sizeInd.textContent = Math.round(newWidth) + " × " + Math.round(newHeight);
-      }
-    }
-  });
-
-  document.addEventListener("mouseup", () => {
+  function endAction() {
     isDragging = false;
     isResizing = false;
     activeWindow = null;
     win.classList.remove("moving", "resizing");
     document.body.classList.remove("dragging");
-  });
+    hideDragOverlay();
+  }
 
-  document.addEventListener("touchend", () => {
-    isDragging = false;
-    isResizing = false;
-    activeWindow = null;
-    win.classList.remove("moving", "resizing");
-    document.body.classList.remove("dragging");
-  });
-
-  // Copy URL
+  // ===== COPY URL =====
   copyBtn.addEventListener("click", () => {
     const url = win.dataset.url;
     if (navigator.clipboard) {
@@ -567,19 +698,31 @@ function attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirm
     }
   });
 
-  // Refresh
+  // ===== MUTE (Advanced Multi-Provider) =====
+  muteBtn.addEventListener("click", () => {
+    muteController.mute();
+  });
+
+  volumeControl.addEventListener("click", () => {
+    muteController.mute();
+  });
+
+  // ===== REFRESH =====
   refreshBtn.addEventListener("click", () => {
-    const iframe = win.querySelector("iframe");
-    if (iframe) {
-      const src = iframe.src;
-      iframe.src = "";
-      setTimeout(() => {
-        iframe.src = src;
-      }, 100);
+    const frameContainer = win.querySelector(".video-frame-container");
+    if (frameContainer) {
+      const iframe = frameContainer.querySelector("iframe");
+      if (iframe) {
+        const src = iframe.src;
+        iframe.src = "";
+        setTimeout(() => {
+          iframe.src = src;
+        }, 100);
+      }
     }
   });
 
-  // Close
+  // ===== CLOSE =====
   closeBtn.addEventListener("click", () => {
     overlay.classList.add("show");
   });
@@ -595,9 +738,11 @@ function attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirm
     }
   });
 
-  // Bring to front
+  // ===== BRING TO FRONT =====
   win.addEventListener("click", () => {
-    win.style.zIndex = zIndex++;
+    if (activeWindow !== win && !isDragging && !isResizing) {
+      win.style.zIndex = zIndex++;
+    }
   });
 }
 
@@ -702,7 +847,7 @@ addEmbedBtn.addEventListener("click", () => {
 });
 
 function createEmbedWindow(html, src) {
-  if (welcome.classList.contains("hidden") === false) {
+  if (!welcome.classList.contains("hidden")) {
     welcome.classList.add("hidden");
   }
 
@@ -787,7 +932,12 @@ function createEmbedWindow(html, src) {
   // Content
   const content = document.createElement("div");
   content.className = "video-content";
-  content.innerHTML = html;
+
+  const frameContainer = document.createElement("div");
+  frameContainer.className = "video-frame-container";
+  frameContainer.innerHTML = html;
+
+  content.appendChild(frameContainer);
 
   // Confirm overlay
   const overlay = document.createElement("div");
@@ -824,8 +974,11 @@ function createEmbedWindow(html, src) {
   win.appendChild(content);
   workspace.appendChild(win);
 
+  // Simple mute controller for embed (limited functionality)
+  const embedMuteController = new MuteController(win);
+
   // Events
-  attachWindowEvents(win, moveBtn, copyBtn, refreshBtn, closeBtn, confirmNo, confirmYes, overlay, sizeInd);
+  attachWindowEvents(win, moveBtn, copyBtn, null, refreshBtn, closeBtn, confirmNo, confirmYes, overlay, sizeInd, embedMuteController, null);
 
   closeSidebar();
 }
