@@ -1,740 +1,806 @@
-(function () {
+(function() {
     'use strict';
 
-    // ============================================================
-    //  HELPERS
-    // ============================================================
-
-    const P = {
-        YT: 'youtube', TW: 'twitch', KI: 'kick',
-        RU: 'rumble', MP4: 'direct', UNK: 'unknown'
+    // ===== STATE =====
+    const state = {
+        videos: [],
+        layout: '2',
+        fillMode: true,
+        activeVideoIndex: -1,
+        uiVisible: true,
+        hideTimer: null,
+        dragSource: null
     };
 
-    function detect(u) {
-        if (!u) return P.UNK;
-        if (/youtu(\.be|be\.com)/i.test(u)) return P.YT;
-        if (/twitch\.tv/i.test(u)) return P.TW;
-        if (/kick\.com/i.test(u)) return P.KI;
-        if (/rumble\.com/i.test(u)) return P.RU;
-        if (/\.(mp4|webm|m3u8|ogg|mov)(\?|$)/i.test(u)) return P.MP4;
-        return P.UNK;
-    }
+    // ===== DOM REFS =====
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
 
-    function ytId(u) {
-        const m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-        return m ? m[1] : null;
-    }
-    function twCh(u) { return (u.match(/twitch\.tv\/([a-zA-Z0-9_]+)/) || [])[1]; }
-    function kiCh(u) { return (u.match(/kick\.com\/([a-zA-Z0-9_-]+)/) || [])[1]; }
-    function ruEmb(u) {
-        let m = u.match(/rumble\.com\/embed\/([a-zA-Z0-9]+)/);
-        if (m) return 'https://rumble.com/embed/' + m[1] + '/';
-        m = u.match(/rumble\.com\/([a-zA-Z0-9-]+)\.html/);
-        if (m) return 'https://rumble.com/embed/' + m[1] + '/';
-        return u;
-    }
+    const dom = {
+        topBar: $('#topBar'),
+        videoGrid: $('#videoGrid'),
+        emptyState: $('#emptyState'),
+        addModal: $('#addModal'),
+        layoutModal: $('#layoutModal'),
+        controlsOverlay: $('#controlsOverlay'),
+        urlInput: $('#urlInput'),
+        addBtn: $('#addBtn'),
+        addVideoBtn: $('#addVideoBtn'),
+        layoutBtn: $('#layoutBtn'),
+        closeModal: $('#closeModal'),
+        closeLayoutModal: $('#closeLayoutModal'),
+        pasteBtn: $('#pasteBtn'),
+        fillToggle: $('#fillToggle'),
+        tapHint: $('#tapHint')
+    };
 
-    function fmt(s) {
-        if (!s || !isFinite(s)) return '0:00';
-        const h = ~~(s / 3600), m = ~~((s % 3600) / 60), sc = ~~(s % 60);
-        return h ? h + ':' + String(m).padStart(2, '0') + ':' + String(sc).padStart(2, '0')
-            : m + ':' + String(sc).padStart(2, '0');
-    }
-
-    function toast(msg, ms) {
-        const t = document.getElementById('toast');
-        t.textContent = msg;
-        t.classList.remove('hidden');
-        clearTimeout(t._t);
-        t._t = setTimeout(() => t.classList.add('hidden'), ms || 2400);
-    }
-
-    // ============================================================
-    //  YOUTUBE API READY
-    // ============================================================
-
-    let ytReady = new Promise(r => {
-        if (window.YT && window.YT.Player) return r();
-        window.onYouTubeIframeAPIReady = r;
-    });
-
-    // ============================================================
-    //  SLOT
-    // ============================================================
-
-    class Slot {
-        constructor(i) {
-            this.i = i;
-            this.url = '';
-            this.plat = P.UNK;
-            this.vid = null;      // <video>
-            this.ytp = null;      // YT.Player
-            this.ifr = null;      // <iframe> (twitch/kick/rumble)
-            this.vol = 0;
-            this.muted = true;
-            this._overlayTimer = null;
-            this._build();
-        }
-
-        _build() {
-            const el = document.createElement('div');
-            el.className = 'cell empty';
-            el.dataset.i = this.i;
-            el.innerHTML = `
-                <span class="cell-num">${this.i + 1}</span>
-                <span class="cell-mute"><svg viewBox="0 0 24 24"><path d="M4.34 2.93L2.93 4.34 7.29 8.7 7 9H3v6h4l5 5v-6.59l4.18 4.18c-.65.49-1.38.88-2.18 1.11v2.06a8.94 8.94 0 0 0 3.61-1.75l2.05 2.05 1.41-1.41L4.34 2.93zM12 4l-2.68 2.68L12 9.31V4zm7 8c0 .94-.2 1.82-.54 2.64l1.5 1.5A8.94 8.94 0 0 0 21 12c0-4.28-3-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71z"/></svg></span>
-            `;
-            this.el = el;
-        }
-
-        // ---- Show / hide the number + mute overlays for 3 seconds ----
-        flashOverlay() {
-            this.el.classList.add('show-overlay');
-            clearTimeout(this._overlayTimer);
-            this._overlayTimer = setTimeout(() => {
-                this.el.classList.remove('show-overlay');
-            }, 3000);
-        }
-
-        // ---- Sync the unmuted class on cell ----
-        _syncCellMute() {
-            this.el.classList.toggle('unmuted', !this.muted);
-        }
-
-        // ---- Load ----
-        async load(url) {
-            this.clear();
-            this.url = url.trim();
-            this.plat = detect(this.url);
-            this.el.classList.remove('empty');
-            this.muted = true;
-            this.vol = 0;
-            this._syncCellMute();
-
-            switch (this.plat) {
-                case P.YT:  await this._loadYT(); break;
-                case P.TW:  this._loadTW(); break;
-                case P.KI:  this._loadKI(); break;
-                case P.RU:  this._loadRU(); break;
-                case P.MP4: this._loadMP4(); break;
-                default:    this._loadIFR(); break;
+    // ===== URL PARSERS =====
+    const parsers = {
+        youtube(url) {
+            const patterns = [
+                /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+                /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
+                /^([a-zA-Z0-9_-]{11})$/
+            ];
+            for (const p of patterns) {
+                const m = url.match(p);
+                if (m) return { platform: 'youtube', id: m[1] };
             }
+            // YouTube playlist
+            const plMatch = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+            const vidMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+            if (vidMatch) return { platform: 'youtube', id: vidMatch[1] };
+
+            // YouTube channel live
+            const channelMatch = url.match(/youtube\.com\/@([^\/\?]+)/);
+            if (channelMatch) return { platform: 'youtube', id: channelMatch[1], type: 'channel' };
+
+            return null;
+        },
+
+        twitch(url) {
+            // Twitch clips
+            const clipMatch = url.match(/clips\.twitch\.tv\/([a-zA-Z0-9_-]+)/);
+            if (clipMatch) return { platform: 'twitch', id: clipMatch[1], type: 'clip' };
+
+            const clipMatch2 = url.match(/twitch\.tv\/\w+\/clip\/([a-zA-Z0-9_-]+)/);
+            if (clipMatch2) return { platform: 'twitch', id: clipMatch2[1], type: 'clip' };
+
+            // Twitch VOD
+            const vodMatch = url.match(/twitch\.tv\/videos\/(\d+)/);
+            if (vodMatch) return { platform: 'twitch', id: vodMatch[1], type: 'vod' };
+
+            // Twitch channel
+            const channelMatch = url.match(/twitch\.tv\/([a-zA-Z0-9_]+)\/?$/);
+            if (channelMatch && channelMatch[1] !== 'videos') {
+                return { platform: 'twitch', id: channelMatch[1], type: 'channel' };
+            }
+
+            // Plain channel name check
+            if (/^[a-zA-Z0-9_]{3,25}$/.test(url) && !url.includes('.')) {
+                return null; // Could be any platform
+            }
+
+            return null;
+        },
+
+        rumble(url) {
+            // Rumble embed
+            const embedMatch = url.match(/rumble\.com\/embed\/([a-zA-Z0-9]+)/);
+            if (embedMatch) return { platform: 'rumble', id: embedMatch[1], type: 'embed' };
+
+            // Rumble video page
+            const videoMatch = url.match(/rumble\.com\/([a-zA-Z0-9\-]+)\.html/);
+            if (videoMatch) return { platform: 'rumble', id: videoMatch[1], type: 'video' };
+
+            // Rumble general URL
+            const generalMatch = url.match(/rumble\.com\/([a-zA-Z0-9\-]+)/);
+            if (generalMatch) return { platform: 'rumble', id: generalMatch[1], type: 'video' };
+
+            return null;
+        },
+
+        kick(url) {
+            // Kick clip
+            const clipMatch = url.match(/kick\.com\/[^\/]+\?clip=([a-zA-Z0-9_-]+)/);
+            if (clipMatch) return { platform: 'kick', id: clipMatch[1], type: 'clip' };
+
+            // Kick video/VOD
+            const vodMatch = url.match(/kick\.com\/video\/([a-zA-Z0-9_-]+)/);
+            if (vodMatch) return { platform: 'kick', id: vodMatch[1], type: 'vod' };
+
+            // Kick channel
+            const channelMatch = url.match(/kick\.com\/([a-zA-Z0-9_]+)\/?$/);
+            if (channelMatch) return { platform: 'kick', id: channelMatch[1], type: 'channel' };
+
+            return null;
+        }
+    };
+
+    function parseURL(input) {
+        input = input.trim();
+
+        // Add protocol if missing
+        let url = input;
+        if (!url.includes('://') && url.includes('.')) {
+            url = 'https://' + url;
         }
 
-        async _loadYT() {
-            const id = ytId(this.url);
-            if (!id) { this._loadIFR(); return; }
-            await ytReady;
-            const div = document.createElement('div');
-            div.id = 'yt' + this.i + '_' + Date.now();
-            this.el.appendChild(div);
-            this.ytp = new YT.Player(div.id, {
-                videoId: id,
-                playerVars: {
-                    autoplay: 1, mute: 1, controls: 0, playsinline: 1,
-                    modestbranding: 1, rel: 0, showinfo: 0, fs: 0,
-                    iv_load_policy: 3, disablekb: 1, origin: location.origin
-                },
-                events: {
-                    onReady: e => { e.target.mute(); e.target.setVolume(0); }
+        // Try each parser
+        const yt = parsers.youtube(url);
+        if (yt) return yt;
+
+        const tw = parsers.twitch(url);
+        if (tw) return tw;
+
+        const ru = parsers.rumble(url);
+        if (ru) return ru;
+
+        const ki = parsers.kick(url);
+        if (ki) return ki;
+
+        // Check if it looks like an embed URL already
+        if (url.includes('iframe') || url.includes('embed')) {
+            return { platform: 'custom', embedUrl: url };
+        }
+
+        return null;
+    }
+
+    function getEmbedURL(parsed) {
+        const parent = window.location.hostname || 'localhost';
+
+        switch (parsed.platform) {
+            case 'youtube':
+                if (parsed.type === 'channel') {
+                    return `https://www.youtube.com/embed/live_stream?channel=${parsed.id}&autoplay=1&mute=1&playsinline=1`;
                 }
-            });
-        }
+                return `https://www.youtube.com/embed/${parsed.id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1&controls=0`;
 
-        _loadTW() {
-            const ch = twCh(this.url);
-            if (!ch) { this._loadIFR(); return; }
-            const par = location.hostname || 'localhost';
-            this._mkIframe('https://player.twitch.tv/?channel=' + ch + '&parent=' + par + '&muted=true&autoplay=true');
-        }
+            case 'twitch':
+                if (parsed.type === 'clip') {
+                    return `https://clips.twitch.tv/embed?clip=${parsed.id}&parent=${parent}&autoplay=true&muted=true`;
+                }
+                if (parsed.type === 'vod') {
+                    return `https://player.twitch.tv/?video=v${parsed.id}&parent=${parent}&autoplay=true&muted=true`;
+                }
+                return `https://player.twitch.tv/?channel=${parsed.id}&parent=${parent}&autoplay=true&muted=true`;
 
-        _loadKI() {
-            const ch = kiCh(this.url);
-            if (!ch) { this._loadIFR(); return; }
-            this._mkIframe('https://player.kick.com/' + ch + '?autoplay=true&muted=true');
-        }
+            case 'rumble':
+                if (parsed.type === 'embed') {
+                    return `https://rumble.com/embed/${parsed.id}/?autoplay=1&mute=1`;
+                }
+                return `https://rumble.com/embed/${parsed.id}/?autoplay=1&mute=1`;
 
-        _loadRU() {
-            const src = ruEmb(this.url);
-            this._mkIframe(src + (src.includes('?') ? '&' : '?') + 'autoplay=1&mute=1');
-        }
+            case 'kick':
+                if (parsed.type === 'clip') {
+                    return `https://player.kick.com/clip/${parsed.id}?autoplay=true&muted=true`;
+                }
+                if (parsed.type === 'vod') {
+                    return `https://player.kick.com/${parsed.id}?autoplay=true&muted=true`;
+                }
+                return `https://player.kick.com/${parsed.id}?autoplay=true&muted=true`;
 
-        _loadMP4() {
-            const v = document.createElement('video');
-            v.src = this.url; v.muted = true; v.playsInline = true;
-            v.setAttribute('playsinline', '');
-            v.setAttribute('webkit-playsinline', '');
-            v.autoplay = true; v.preload = 'auto';
-            v.play().catch(() => {});
-            this.vid = v;
-            this.el.appendChild(v);
-        }
+            case 'custom':
+                return parsed.embedUrl;
 
-        _loadIFR() { this._mkIframe(this.url); }
+            default:
+                return null;
+        }
+    }
 
-        _mkIframe(src) {
-            const f = document.createElement('iframe');
-            f.src = src;
-            f.allow = 'autoplay; encrypted-media; fullscreen';
-            f.setAttribute('allowfullscreen', '');
-            f.setAttribute('playsinline', '');
-            this.ifr = f;
-            this.el.appendChild(f);
-        }
-
-        // ---- Clear ----
-        clear() {
-            if (this.ytp) { try { this.ytp.destroy(); } catch (e) {} this.ytp = null; }
-            if (this.vid) { this.vid.pause(); this.vid.removeAttribute('src'); this.vid.load(); this.vid.remove(); this.vid = null; }
-            if (this.ifr) { this.ifr.src = ''; this.ifr.remove(); this.ifr = null; }
-            // Clean leftover children
-            Array.from(this.el.children).forEach(c => {
-                if (!c.classList.contains('cell-num') && !c.classList.contains('cell-mute')) c.remove();
-            });
-            this.url = ''; this.plat = P.UNK; this.muted = true; this.vol = 0;
-            this.el.classList.add('empty');
-            this.el.classList.remove('show-overlay', 'unmuted');
-        }
-
-        get empty() { return !this.url; }
-        get isYT() { return this.plat === P.YT && !!this.ytp; }
-        get isMP4() { return this.plat === P.MP4 && !!this.vid; }
-        get canCtrl() { return this.isYT || this.isMP4; }
-
-        // ---- Play / Pause ----
-        play() {
-            if (this.isYT) try { this.ytp.playVideo(); } catch (e) {}
-            if (this.isMP4) this.vid.play().catch(() => {});
-        }
-        pause() {
-            if (this.isYT) try { this.ytp.pauseVideo(); } catch (e) {}
-            if (this.isMP4) this.vid.pause();
-        }
-        togglePlay() {
-            if (this.isYT) {
-                try {
-                    const s = this.ytp.getPlayerState();
-                    s === 1 ? this.ytp.pauseVideo() : this.ytp.playVideo();
-                    return s !== 1;
-                } catch (e) { return false; }
-            }
-            if (this.isMP4) {
-                if (this.vid.paused) { this.vid.play().catch(() => {}); return true; }
-                this.vid.pause(); return false;
-            }
-            return false;
-        }
-        playing() {
-            if (this.isYT) try { return this.ytp.getPlayerState() === 1; } catch (e) { return false; }
-            if (this.isMP4) return !this.vid.paused;
+    // ===== VIDEO MANAGEMENT =====
+    function addVideo(url) {
+        const parsed = parseURL(url);
+        if (!parsed) {
+            showToast('Could not parse URL', true);
             return false;
         }
 
-        // ---- VOLUME ----
-        setVol(v) {
-            v = Math.max(0, Math.min(100, Math.round(v)));
-            this.vol = v;
-            this.muted = v === 0;
-
-            // YouTube
-            if (this.isYT) {
-                try {
-                    if (v === 0) { this.ytp.mute(); }
-                    else { this.ytp.unMute(); this.ytp.setVolume(v); }
-                } catch (e) {}
-            }
-
-            // Direct video
-            if (this.isMP4) {
-                this.vid.muted = v === 0;
-                this.vid.volume = v / 100;
-            }
-
-            // Twitch — postMessage
-            if (this.plat === P.TW && this.ifr && this.ifr.contentWindow) {
-                try {
-                    const w = this.ifr.contentWindow;
-                    if (v === 0) {
-                        w.postMessage({ eventName: 'setMuted', params: { muted: true } }, '*');
-                    } else {
-                        w.postMessage({ eventName: 'setMuted', params: { muted: false } }, '*');
-                        w.postMessage({ eventName: 'setVolume', params: { volume: v / 100 } }, '*');
-                    }
-                } catch (e) {}
-            }
-
-            // Kick / Rumble — reload with muted param
-            if ((this.plat === P.KI || this.plat === P.RU) && this.ifr) {
-                this._reloadMute(v === 0);
-            }
-
-            this._syncCellMute();
+        const embedUrl = getEmbedURL(parsed);
+        if (!embedUrl) {
+            showToast('Unsupported URL format', true);
+            return false;
         }
 
-        _reloadMute(mute) {
-            if (!this.ifr) return;
-            let s = this.ifr.src;
-            s = s.replace(/[?&]muted=(true|false)/gi, '').replace(/[?&]mute=[01]/gi, '');
-            const sep = s.includes('?') ? '&' : '?';
-            if (this.plat === P.KI) s += sep + 'muted=' + mute;
-            else s += sep + 'mute=' + (mute ? 1 : 0);
-            this.ifr.src = s;
-        }
+        const video = {
+            id: Date.now() + Math.random(),
+            url: url,
+            embedUrl: embedUrl,
+            platform: parsed.platform,
+            muted: true
+        };
 
-        getVol() {
-            if (this.isYT) try { return this.ytp.isMuted() ? 0 : this.ytp.getVolume(); } catch (e) {}
-            if (this.isMP4) return this.vid.muted ? 0 : Math.round(this.vid.volume * 100);
-            return this.vol;
-        }
-
-        // ---- Seek ----
-        seekTo(t) {
-            if (this.isYT) try { this.ytp.seekTo(t, true); } catch (e) {}
-            if (this.isMP4 && isFinite(t)) this.vid.currentTime = t;
-        }
-        seekRel(d) {
-            this.seekTo(Math.max(0, Math.min(this.dur() || Infinity, this.cur() + d)));
-        }
-        cur() {
-            if (this.isYT) try { return this.ytp.getCurrentTime() || 0; } catch (e) {}
-            if (this.isMP4) return this.vid.currentTime || 0;
-            return 0;
-        }
-        dur() {
-            if (this.isYT) try { return this.ytp.getDuration() || 0; } catch (e) {}
-            if (this.isMP4) return this.vid.duration || 0;
-            return 0;
-        }
-        prog() { const d = this.dur(); return d > 0 ? this.cur() / d : 0; }
-        bufd() {
-            if (this.isYT) try { return this.ytp.getVideoLoadedFraction() || 0; } catch (e) {}
-            if (this.isMP4 && this.vid.buffered.length > 0 && this.vid.duration)
-                return this.vid.buffered.end(this.vid.buffered.length - 1) / this.vid.duration;
-            return 0;
-        }
-
-        destroy() { this.clear(); this.el.remove(); }
+        state.videos.push(video);
+        renderVideos();
+        saveState();
+        showToast(`${parsed.platform} video added`);
+        return true;
     }
 
-    // ============================================================
-    //  SLIDER HELPER
-    // ============================================================
-
-    function slider(track, knob, fill, cb) {
-        let on = false;
-        function pct(e) {
-            const r = track.getBoundingClientRect();
-            return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-        }
-        function set(p) { fill.style.width = (p * 100) + '%'; knob.style.left = (p * 100) + '%'; }
-
-        track.addEventListener('touchstart', e => {
-            e.preventDefault(); on = true;
-            const p = pct(e.touches[0]); set(p); cb(p, 'start');
-        }, { passive: false });
-        document.addEventListener('touchmove', e => {
-            if (!on) return; e.preventDefault();
-            const p = pct(e.touches[0]); set(p); cb(p, 'move');
-        }, { passive: false });
-        document.addEventListener('touchend', () => {
-            if (!on) return; on = false; cb(null, 'end');
-        });
-
-        return { set };
+    function removeVideo(index) {
+        state.videos.splice(index, 1);
+        state.activeVideoIndex = -1;
+        hideControls();
+        renderVideos();
+        saveState();
     }
 
-    // ============================================================
-    //  APP STATE
-    // ============================================================
+    function moveVideo(fromIndex, toIndex) {
+        if (toIndex < 0 || toIndex >= state.videos.length) return;
+        const [video] = state.videos.splice(fromIndex, 1);
+        state.videos.splice(toIndex, 0, video);
+        state.activeVideoIndex = toIndex;
+        renderVideos();
+        saveState();
+    }
 
-    const $ = id => document.getElementById(id);
-    const grid = $('grid');
-    let slots = [];
-    let layout = 2;
-    let active = null;       // currently controlled slot
-    let swapFrom = null;
-    let seeking = false;
-    let raf = null;
+    function reloadVideo(index) {
+        const cells = $$('.video-cell');
+        if (cells[index]) {
+            const iframe = cells[index].querySelector('iframe');
+            if (iframe) {
+                const src = iframe.src;
+                iframe.src = '';
+                setTimeout(() => { iframe.src = src; }, 100);
+            }
+        }
+    }
 
-    // ============================================================
-    //  BUILD GRID
-    // ============================================================
+    function toggleMute(index) {
+        const video = state.videos[index];
+        if (!video) return;
 
-    function buildGrid(n, urls) {
-        layout = n;
-        grid.dataset.count = n;
+        video.muted = !video.muted;
 
-        const old = urls || slots.map(s => s.url);
-        slots.forEach(s => s.destroy());
-        slots = [];
+        // For YouTube, we can try postMessage
+        const cells = $$('.video-cell');
+        const iframe = cells[index]?.querySelector('iframe');
+
+        if (iframe) {
+            let newSrc = video.embedUrl;
+            if (video.platform === 'youtube') {
+                newSrc = newSrc.replace(/mute=[01]/, `mute=${video.muted ? 1 : 0}`);
+            } else if (video.platform === 'twitch') {
+                newSrc = newSrc.replace(/muted=(true|false)/, `muted=${video.muted}`);
+            } else if (video.platform === 'kick') {
+                newSrc = newSrc.replace(/muted=(true|false)/, `muted=${video.muted}`);
+            } else if (video.platform === 'rumble') {
+                newSrc = newSrc.replace(/mute=[01]/, `mute=${video.muted ? 1 : 0}`);
+            }
+            video.embedUrl = newSrc;
+            iframe.src = newSrc;
+        }
+
+        updateMuteButton(index);
+        saveState();
+    }
+
+    function updateMuteButton(index) {
+        const muteBtn = $(`.ctrl-btn[data-action="mute"]`);
+        if (!muteBtn) return;
+        const video = state.videos[index];
+        if (!video) return;
+
+        if (video.muted) {
+            muteBtn.classList.remove('muted');
+            muteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>`;
+        } else {
+            muteBtn.classList.add('muted');
+            muteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>`;
+        }
+    }
+
+    // ===== RENDER =====
+    function renderVideos() {
+        const grid = dom.videoGrid;
         grid.innerHTML = '';
+        grid.dataset.layout = state.layout;
 
-        for (let i = 0; i < n; i++) {
-            const s = new Slot(i);
-            slots.push(s);
-            grid.appendChild(s.el);
-            bindCell(s);
+        if (state.videos.length === 0) {
+            dom.emptyState.classList.remove('hidden');
+            return;
         }
 
-        old.forEach((u, i) => { if (u && i < n) slots[i].load(u); });
-    }
+        dom.emptyState.classList.add('hidden');
 
-    // ============================================================
-    //  CELL TAP — triggers overlay flash + opens panel
-    // ============================================================
+        state.videos.forEach((video, index) => {
+            const cell = document.createElement('div');
+            cell.className = `video-cell${state.fillMode ? ' fill-mode' : ''}`;
+            cell.dataset.index = index;
+            cell.draggable = true;
 
-    function bindCell(s) {
-        s.el.addEventListener('click', () => {
-            if (swapFrom !== null) { doSwap(s); return; }
-            if (s.empty) { openModal(); return; }
-
-            // Flash the overlay badges for 3s
-            s.flashOverlay();
-            // Open control panel
-            openPanel(s);
-        });
-    }
-
-    // ============================================================
-    //  PANEL
-    // ============================================================
-
-    const panel = $('panel');
-    const panelSlot = $('panelSlot');
-    const panelPlat = $('panelPlat');
-    const rowPlay = $('rowPlay');
-    const rowSeek = $('rowSeek');
-    const bPlay = $('bPlay');
-    const ppPlay = bPlay.querySelector('.pp-play');
-    const ppPause = bPlay.querySelector('.pp-pause');
-    const bMute = $('bMute');
-    const volOn = bMute.querySelector('.vol-on');
-    const volOff = bMute.querySelector('.vol-off');
-    const vNum = $('vNum');
-    const tNow = $('tNow');
-    const tEnd = $('tEnd');
-    const sFill = $('sFill');
-    const sBuf = $('sBuf');
-    const sKnob = $('sKnob');
-    const vFill = $('vFill');
-    const vKnob = $('vKnob');
-
-    // Init sliders once
-    const seekSl = slider($('sSeek'), sKnob, sFill, (p, ph) => {
-        if (!active) return;
-        if (ph === 'start' || ph === 'move') {
-            seeking = true;
-            const d = active.dur();
-            if (d > 0 && p !== null) { active.seekTo(p * d); tNow.textContent = fmt(p * d); }
-        }
-        if (ph === 'end') seeking = false;
-    });
-
-    const volSl = slider($('sVol'), vKnob, vFill, (p, ph) => {
-        if (!active || p === null) return;
-        const v = Math.round(p * 100);
-        active.setVol(v);
-        vNum.textContent = v + '%';
-        syncMuteUI();
-        if (v > 0) muteOthers(active);
-    });
-
-    function openPanel(s) {
-        active = s;
-        panelSlot.textContent = 'Slot ' + (s.i + 1);
-
-        // Platform badge
-        const names = { youtube:'YouTube', twitch:'Twitch', kick:'Kick', rumble:'Rumble', direct:'Video', unknown:'Embed' };
-        panelPlat.textContent = names[s.plat] || 'Embed';
-        panelPlat.className = 'panel-plat pt-' + s.plat;
-
-        // Show/hide playback + seek rows
-        rowPlay.style.display = s.canCtrl ? 'flex' : 'none';
-        rowSeek.style.display = s.canCtrl ? 'flex' : 'none';
-
-        syncPlayUI();
-        syncMuteUI();
-        syncVolUI();
-
-        panel.classList.remove('hidden');
-        startLoop();
-    }
-
-    function closePanel() {
-        panel.classList.add('hidden');
-        stopLoop();
-        active = null;
-    }
-
-    function syncPlayUI() {
-        if (!active) return;
-        const p = active.playing();
-        ppPlay.classList.toggle('hide', p);
-        ppPause.classList.toggle('hide', !p);
-    }
-
-    function syncMuteUI() {
-        if (!active) return;
-        volOn.classList.toggle('hide', active.muted);
-        volOff.classList.toggle('hide', !active.muted);
-    }
-
-    function syncVolUI() {
-        if (!active) return;
-        const v = active.getVol();
-        vFill.style.width = v + '%';
-        vKnob.style.left = v + '%';
-        vNum.textContent = v + '%';
-    }
-
-    function startLoop() {
-        stopLoop();
-        (function tick() {
-            if (!active || panel.classList.contains('hidden')) return;
-            if (!seeking && active.canCtrl) {
-                const p = active.prog(), b = active.bufd();
-                sFill.style.width = (p * 100) + '%';
-                sBuf.style.width = (b * 100) + '%';
-                sKnob.style.left = (p * 100) + '%';
-                tNow.textContent = fmt(active.cur());
-                tEnd.textContent = fmt(active.dur());
+            if (index === state.activeVideoIndex) {
+                cell.classList.add('active');
             }
-            syncPlayUI();
-            raf = requestAnimationFrame(tick);
-        })();
-    }
 
-    function stopLoop() { cancelAnimationFrame(raf); }
+            cell.innerHTML = `
+                <iframe
+                    src="${video.embedUrl}"
+                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                    allowfullscreen
+                    loading="lazy"
+                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-presentation"
+                ></iframe>
+                <div class="video-tap-zone" data-index="${index}"></div>
+                <span class="platform-badge ${video.platform}">${video.platform}</span>
+                <div class="drag-handle" data-index="${index}">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+                </div>
+            `;
 
-    // Panel buttons
-    $('panelX').onclick = closePanel;
-    $('panelDrag').onclick = closePanel;
+            // Drag and drop
+            cell.addEventListener('dragstart', handleDragStart);
+            cell.addEventListener('dragend', handleDragEnd);
+            cell.addEventListener('dragover', handleDragOver);
+            cell.addEventListener('dragenter', handleDragEnter);
+            cell.addEventListener('dragleave', handleDragLeave);
+            cell.addEventListener('drop', handleDrop);
 
-    $('bPlay').onclick = () => { if (active) { active.togglePlay(); syncPlayUI(); } };
-    $('bRew').onclick = () => { if (active) active.seekRel(-10); };
-    $('bFwd').onclick = () => { if (active) active.seekRel(10); };
+            // Touch drag
+            cell.addEventListener('touchstart', handleTouchStart, { passive: false });
+            cell.addEventListener('touchmove', handleTouchMove, { passive: false });
+            cell.addEventListener('touchend', handleTouchEnd);
 
-    $('bMute').onclick = () => {
-        if (!active) return;
-        if (active.muted) {
-            // Unmute to 50% or previous volume
-            const target = active.vol > 0 ? active.vol : 50;
-            active.setVol(target);
-            muteOthers(active);
-            toast('Slot ' + (active.i + 1) + ' unmuted');
-        } else {
-            active.setVol(0);
-        }
-        syncMuteUI();
-        syncVolUI();
-    };
-
-    $('bRemove').onclick = () => {
-        if (!active) return;
-        active.clear();
-        save();
-        toast('Removed');
-        closePanel();
-    };
-
-    $('bSwap').onclick = () => {
-        if (!active) return;
-        swapFrom = active;
-        closePanel();
-        $('swapOv').classList.remove('hidden');
-        // Highlight other cells
-        slots.forEach(s => { if (s !== swapFrom && !s.empty) s.el.classList.add('swap-pick'); });
-    };
-
-    // ============================================================
-    //  MUTE ALL OTHERS
-    // ============================================================
-
-    function muteOthers(keep) {
-        slots.forEach(s => {
-            if (s !== keep && !s.empty) s.setVol(0);
+            grid.appendChild(cell);
         });
+
+        // Apply layout-specific row calculations
+        adjustGridRows();
     }
 
-    // ============================================================
-    //  SWAP
-    // ============================================================
+    function adjustGridRows() {
+        const grid = dom.videoGrid;
+        const count = state.videos.length;
+        const layout = state.layout;
 
-    $('swapNo').onclick = cancelSwap;
-
-    function cancelSwap() {
-        $('swapOv').classList.add('hidden');
-        slots.forEach(s => s.el.classList.remove('swap-pick'));
-        swapFrom = null;
-    }
-
-    function doSwap(target) {
-        if (!swapFrom || target === swapFrom) { cancelSwap(); return; }
-
-        // Swap DOM elements
-        const aEl = swapFrom.el;
-        const bEl = target.el;
-        const aNext = aEl.nextSibling;
-        const bNext = bEl.nextSibling;
-        const parent = grid;
-
-        if (aNext === bEl) {
-            parent.insertBefore(bEl, aEl);
-        } else if (bNext === aEl) {
-            parent.insertBefore(aEl, bEl);
-        } else {
-            const placeholder = document.createElement('div');
-            parent.insertBefore(placeholder, aEl);
-            parent.insertBefore(aEl, bNext);
-            parent.insertBefore(bEl, placeholder);
-            parent.removeChild(placeholder);
+        if (layout === 'pip' || layout === '2x1') {
+            // PiP and Featured layouts handled by CSS
+            return;
         }
 
-        // Update indices
-        reindex();
-        toast('Swapped ' + (swapFrom.i + 1) + ' ↔ ' + (target.i + 1));
-        cancelSwap();
-        save();
+        let cols;
+        switch (layout) {
+            case '1': cols = 1; break;
+            case '2': cols = 2; break;
+            case '3': cols = 3; break;
+            case 'auto': cols = count <= 1 ? 1 : count <= 4 ? 2 : 3; break;
+            default: cols = 2;
+        }
+
+        if (layout === 'auto') {
+            grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+        }
+
+        const rows = Math.ceil(count / cols);
+        grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
     }
 
-    function reindex() {
-        Array.from(grid.children).forEach((el, i) => {
-            const s = slots.find(sl => sl.el === el);
-            if (s) {
-                s.i = i;
-                el.dataset.i = i;
-                el.querySelector('.cell-num').textContent = i + 1;
-            }
-        });
-        slots.sort((a, b) => a.i - b.i);
+    // ===== DRAG & DROP (Desktop) =====
+    function handleDragStart(e) {
+        state.dragSource = parseInt(e.currentTarget.dataset.index);
+        e.currentTarget.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
     }
 
-    // ============================================================
-    //  SECRET TRIGGER — triple tap top-right
-    // ============================================================
+    function handleDragEnd(e) {
+        e.currentTarget.classList.remove('dragging');
+        $$('.video-cell').forEach(c => c.classList.remove('drag-over'));
+        state.dragSource = null;
+    }
 
-    let staps = 0, stimer = null;
-    $('secretZone').addEventListener('touchend', e => {
+    function handleDragOver(e) {
         e.preventDefault();
-        staps++;
-        clearTimeout(stimer);
-        stimer = setTimeout(() => staps = 0, 450);
-        if (staps >= 3) { staps = 0; openModal(); }
-    });
+        e.dataTransfer.dropEffect = 'move';
+    }
 
-    // ============================================================
-    //  MODAL
-    // ============================================================
+    function handleDragEnter(e) {
+        e.currentTarget.classList.add('drag-over');
+    }
 
-    const modal = $('modal');
-    const urlList = $('urlList');
-    const gridOpts = $('gridOpts');
-    let inputs = [];
+    function handleDragLeave(e) {
+        e.currentTarget.classList.remove('drag-over');
+    }
 
-    function openModal() {
-        urlList.innerHTML = '';
-        inputs = [];
+    function handleDrop(e) {
+        e.preventDefault();
+        const target = parseInt(e.currentTarget.dataset.index);
+        if (state.dragSource !== null && state.dragSource !== target) {
+            swapVideos(state.dragSource, target);
+        }
+        e.currentTarget.classList.remove('drag-over');
+    }
 
-        const n = Math.max(layout, slots.length);
-        for (let i = 0; i < n; i++) addInput(slots[i] ? slots[i].url : '');
+    // ===== TOUCH DRAG =====
+    let touchDragData = { active: false, startX: 0, startY: 0, index: -1, longPress: null };
 
-        gridOpts.querySelectorAll('.g-btn').forEach(b =>
-            b.classList.toggle('active', +b.dataset.n === layout)
-        );
+    function handleTouchStart(e) {
+        const index = parseInt(e.currentTarget.dataset.index);
+        const touch = e.touches[0];
+        touchDragData.startX = touch.clientX;
+        touchDragData.startY = touch.clientY;
+        touchDragData.index = index;
 
-        modal.classList.remove('hidden');
-        requestAnimationFrame(() => {
-            const emp = inputs.find(inp => !inp.value);
-            if (emp) emp.focus();
+        // Long press to start drag
+        touchDragData.longPress = setTimeout(() => {
+            touchDragData.active = true;
+            e.currentTarget.classList.add('dragging');
+            navigator.vibrate && navigator.vibrate(50);
+        }, 500);
+    }
+
+    function handleTouchMove(e) {
+        if (!touchDragData.active) {
+            const touch = e.touches[0];
+            const dx = Math.abs(touch.clientX - touchDragData.startX);
+            const dy = Math.abs(touch.clientY - touchDragData.startY);
+            if (dx > 10 || dy > 10) {
+                clearTimeout(touchDragData.longPress);
+            }
+            return;
+        }
+        e.preventDefault();
+
+        const touch = e.touches[0];
+        const target = document.elementFromPoint(touch.clientX, touch.clientY);
+        const cell = target?.closest('.video-cell');
+
+        $$('.video-cell').forEach(c => c.classList.remove('drag-over'));
+        if (cell && parseInt(cell.dataset.index) !== touchDragData.index) {
+            cell.classList.add('drag-over');
+        }
+    }
+
+    function handleTouchEnd(e) {
+        clearTimeout(touchDragData.longPress);
+
+        if (touchDragData.active) {
+            const touch = e.changedTouches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            const cell = target?.closest('.video-cell');
+
+            if (cell) {
+                const targetIndex = parseInt(cell.dataset.index);
+                if (targetIndex !== touchDragData.index) {
+                    swapVideos(touchDragData.index, targetIndex);
+                }
+            }
+
+            $$('.video-cell').forEach(c => {
+                c.classList.remove('dragging');
+                c.classList.remove('drag-over');
+            });
+        }
+
+        touchDragData.active = false;
+        touchDragData.index = -1;
+    }
+
+    function swapVideos(a, b) {
+        const temp = state.videos[a];
+        state.videos[a] = state.videos[b];
+        state.videos[b] = temp;
+        renderVideos();
+        saveState();
+    }
+
+    // ===== UI CONTROLS =====
+    function showControls(index) {
+        state.activeVideoIndex = index;
+
+        // Highlight active cell
+        $$('.video-cell').forEach((c, i) => {
+            c.classList.toggle('active', i === index);
+        });
+
+        // Show controls
+        dom.controlsOverlay.classList.remove('hidden');
+        dom.topBar.classList.remove('hidden');
+        state.uiVisible = true;
+
+        updateMuteButton(index);
+
+        // Auto-hide
+        resetHideTimer();
+    }
+
+    function hideControls() {
+        state.activeVideoIndex = -1;
+        $$('.video-cell').forEach(c => c.classList.remove('active'));
+        dom.controlsOverlay.classList.add('hidden');
+
+        if (state.videos.length > 0) {
+            dom.topBar.classList.add('hidden');
+        }
+
+        state.uiVisible = false;
+        clearTimeout(state.hideTimer);
+    }
+
+    function toggleUI() {
+        if (state.uiVisible && state.activeVideoIndex === -1) {
+            dom.topBar.classList.add('hidden');
+            state.uiVisible = false;
+        } else if (!state.uiVisible) {
+            dom.topBar.classList.remove('hidden');
+            state.uiVisible = true;
+            resetHideTimer();
+        }
+    }
+
+    function resetHideTimer() {
+        clearTimeout(state.hideTimer);
+        state.hideTimer = setTimeout(() => {
+            if (state.videos.length > 0) {
+                hideControls();
+            }
+        }, 5000);
+    }
+
+    // ===== MODALS =====
+    function openAddModal() {
+        dom.addModal.classList.remove('hidden');
+        dom.urlInput.value = '';
+        setTimeout(() => dom.urlInput.focus(), 300);
+    }
+
+    function closeAddModal() {
+        dom.addModal.classList.add('hidden');
+        dom.urlInput.blur();
+    }
+
+    function openLayoutModal() {
+        dom.layoutModal.classList.remove('hidden');
+        updateLayoutSelection();
+    }
+
+    function closeLayoutModal() {
+        dom.layoutModal.classList.add('hidden');
+    }
+
+    function updateLayoutSelection() {
+        $$('.layout-option').forEach(opt => {
+            opt.classList.toggle('active', opt.dataset.layout === state.layout);
         });
     }
 
-    function closeModal() { modal.classList.add('hidden'); }
+    // ===== TOAST =====
+    function showToast(msg, isError = false) {
+        const existing = $('.toast');
+        if (existing) existing.remove();
 
-    function addInput(val) {
-        const idx = inputs.length;
-        const row = document.createElement('div');
-        row.className = 'u-row';
-        row.innerHTML = `
-            <div class="u-num">${idx + 1}</div>
-            <input type="url" placeholder="Paste video URL" autocapitalize="none" autocomplete="off" spellcheck="false">
-            <button class="u-x" aria-label="Clear"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        `;
-        const inp = row.querySelector('input');
-        inp.value = val || '';
-        row.querySelector('.u-x').onclick = () => { inp.value = ''; inp.focus(); };
-        urlList.appendChild(row);
-        inputs.push(inp);
+        const toast = document.createElement('div');
+        toast.className = `toast${isError ? ' error' : ''}`;
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+
+        setTimeout(() => toast.remove(), 2500);
     }
 
-    $('addRow').onclick = () => addInput();
-    $('modalBg').onclick = closeModal;
-    $('modalX').onclick = closeModal;
-
-    gridOpts.addEventListener('click', e => {
-        const b = e.target.closest('.g-btn');
-        if (!b) return;
-        gridOpts.querySelectorAll('.g-btn').forEach(x => x.classList.remove('active'));
-        b.classList.add('active');
-        // Ensure enough input rows
-        const n = +b.dataset.n;
-        while (inputs.length < n) addInput();
-    });
-
-    $('loadBtn').onclick = () => {
-        const n = +gridOpts.querySelector('.g-btn.active').dataset.n;
-        const urls = inputs.map(inp => inp.value.trim());
-
-        buildGrid(n, urls);
-        save();
-        closeModal();
-
-        const ct = urls.filter(u => u).length;
-        if (ct > 0) toast(ct + ' video' + (ct > 1 ? 's' : '') + ' loaded');
-    };
-
-    // ============================================================
-    //  PERSISTENCE
-    // ============================================================
-
-    function save() {
+    // ===== PERSISTENCE =====
+    function saveState() {
         try {
-            localStorage.setItem('mv', JSON.stringify({ layout, urls: slots.map(s => s.url) }));
-        } catch (e) {}
+            const data = {
+                videos: state.videos,
+                layout: state.layout,
+                fillMode: state.fillMode
+            };
+            localStorage.setItem('multiplayerState', JSON.stringify(data));
+        } catch (e) { /* ignore */ }
     }
 
-    function restore() {
+    function loadState() {
         try {
-            const d = JSON.parse(localStorage.getItem('mv'));
-            if (d && d.urls) { buildGrid(d.layout || 2, d.urls); return; }
-        } catch (e) {}
-        buildGrid(2);
+            const data = JSON.parse(localStorage.getItem('multiplayerState'));
+            if (data) {
+                state.videos = data.videos || [];
+                state.layout = data.layout || '2';
+                state.fillMode = data.fillMode !== undefined ? data.fillMode : true;
+                dom.fillToggle.checked = state.fillMode;
+            }
+        } catch (e) { /* ignore */ }
     }
 
-    // ============================================================
-    //  VISIBILITY
-    // ============================================================
+    // ===== EVENT LISTENERS =====
+    function init() {
+        loadState();
+        renderVideos();
 
-    document.addEventListener('visibilitychange', () => {
-        slots.forEach(s => {
-            if (!s.isMP4) return;
-            if (document.hidden) {
-                if (!s.vid.paused) { s._wp = true; s.pause(); }
-            } else {
-                if (s._wp) { s.play(); s._wp = false; }
+        // Add button
+        dom.addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openAddModal();
+        });
+
+        // Layout button
+        dom.layoutBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openLayoutModal();
+        });
+
+        // Close modals
+        dom.closeModal.addEventListener('click', closeAddModal);
+        dom.closeLayoutModal.addEventListener('click', closeLayoutModal);
+
+        // Modal overlays
+        dom.addModal.querySelector('.modal-overlay').addEventListener('click', closeAddModal);
+        dom.layoutModal.querySelector('.modal-overlay').addEventListener('click', closeLayoutModal);
+
+        // Paste button
+        dom.pasteBtn.addEventListener('click', async () => {
+            try {
+                const text = await navigator.clipboard.readText();
+                dom.urlInput.value = text;
+            } catch {
+                showToast('Could not access clipboard', true);
             }
         });
-    });
 
-    // Prevent iOS rubber-band bounce
-    document.addEventListener('touchmove', e => {
-        if (!e.target.closest('.modal-body')) e.preventDefault();
-    }, { passive: false });
+        // Add video
+        dom.addVideoBtn.addEventListener('click', () => {
+            const url = dom.urlInput.value.trim();
+            if (!url) {
+                showToast('Please enter a URL', true);
+                return;
+            }
+            if (addVideo(url)) {
+                closeAddModal();
+                // Show first-time tap hint
+                if (state.videos.length === 1) {
+                    dom.tapHint.classList.remove('hidden');
+                    setTimeout(() => dom.tapHint.classList.add('hidden'), 3500);
+                }
+                // Auto-hide top bar after adding
+                setTimeout(() => {
+                    if (state.videos.length > 0 && state.activeVideoIndex === -1) {
+                        dom.topBar.classList.add('hidden');
+                        state.uiVisible = false;
+                    }
+                }, 2000);
+            }
+        });
 
-    // ============================================================
-    //  INIT
-    // ============================================================
+        // Enter key on input
+        dom.urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                dom.addVideoBtn.click();
+            }
+        });
 
-    restore();
+        // Layout options
+        $$('.layout-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                state.layout = opt.dataset.layout;
+                updateLayoutSelection();
+                renderVideos();
+                saveState();
+                closeLayoutModal();
+            });
+        });
 
+        // Fill mode toggle
+        dom.fillToggle.addEventListener('change', () => {
+            state.fillMode = dom.fillToggle.checked;
+            renderVideos();
+            saveState();
+        });
+
+        // Video tap zones (delegated)
+        dom.videoGrid.addEventListener('click', (e) => {
+            const tapZone = e.target.closest('.video-tap-zone');
+            if (tapZone) {
+                e.stopPropagation();
+                const index = parseInt(tapZone.dataset.index);
+
+                if (state.activeVideoIndex === index) {
+                    hideControls();
+                } else {
+                    showControls(index);
+                }
+                return;
+            }
+        });
+
+        // Control actions
+        dom.controlsOverlay.addEventListener('click', (e) => {
+            const btn = e.target.closest('.ctrl-btn');
+            if (!btn) return;
+
+            e.stopPropagation();
+            const action = btn.dataset.action;
+            const idx = state.activeVideoIndex;
+
+            if (idx < 0) return;
+
+            resetHideTimer();
+
+            switch (action) {
+                case 'mute':
+                    toggleMute(idx);
+                    break;
+                case 'move-up':
+                    if (idx > 0) moveVideo(idx, idx - 1);
+                    break;
+                case 'move-down':
+                    if (idx < state.videos.length - 1) moveVideo(idx, idx + 1);
+                    break;
+                case 'reload':
+                    reloadVideo(idx);
+                    showToast('Reloading...');
+                    break;
+                case 'remove':
+                    removeVideo(idx);
+                    showToast('Video removed');
+                    break;
+            }
+        });
+
+        // Tap outside to hide UI
+        document.addEventListener('click', (e) => {
+            if (state.videos.length === 0) return;
+
+            if (!e.target.closest('.modal') &&
+                !e.target.closest('.top-bar') &&
+                !e.target.closest('.controls-overlay') &&
+                !e.target.closest('.video-tap-zone') &&
+                !e.target.closest('.drag-handle')) {
+                if (state.activeVideoIndex >= 0) {
+                    hideControls();
+                } else {
+                    toggleUI();
+                }
+            }
+        });
+
+        // Prevent iOS bounce
+        document.body.addEventListener('touchmove', (e) => {
+            if (e.target.closest('.modal-content')) return;
+            if (!touchDragData.active) return;
+            e.preventDefault();
+        }, { passive: false });
+
+        // Handle orientation change
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                renderVideos();
+            }, 300);
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+
+            switch (e.key) {
+                case 'a':
+                case 'A':
+                    openAddModal();
+                    break;
+                case 'Escape':
+                    if (!dom.addModal.classList.contains('hidden')) closeAddModal();
+                    else if (!dom.layoutModal.classList.contains('hidden')) closeLayoutModal();
+                    else hideControls();
+                    break;
+                case 'l':
+                case 'L':
+                    openLayoutModal();
+                    break;
+            }
+        });
+
+        // Show UI initially if no videos
+        if (state.videos.length === 0) {
+            dom.topBar.classList.remove('hidden');
+            state.uiVisible = true;
+        } else {
+            dom.topBar.classList.add('hidden');
+            state.uiVisible = false;
+        }
+    }
+
+    // Start
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
