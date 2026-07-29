@@ -26,7 +26,7 @@
             <span>Layout</span>
         </button>
         <button class="menu-item" data-action="select" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.9959.9959 0 0 0 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
             <span>Select / Edit</span>
         </button>
         <button class="menu-item" data-action="clearall" type="button">
@@ -36,9 +36,7 @@
     </div>
     <div id="menuOverlay" class="menu-overlay hidden"></div>
 
-    <div id="videoWrapper" class="video-wrapper">
-        <div id="videoGrid" class="video-grid"></div>
-    </div>
+    <div id="videoGrid" class="video-grid"></div>
 
     <div id="emptyState" class="empty-state">
         <div class="empty-icon">
@@ -103,11 +101,12 @@
                 </div>
                 <div class="examples">
                     <p>Supported formats:</p>
-                    <code>youtube.com/watch?v=xxxxx</code>
-                    <code>youtu.be/xxxxx</code>
-                    <code>twitch.tv/channelname</code>
-                    <code>rumble.com/embed/xxxxx</code>
-                    <code>kick.com/channelname</code>
+                    <code>youtube.com/watch?v=ID</code>
+                    <code>youtu.be/ID</code>
+                    <code>youtube.com/live/ID</code>
+                    <code>twitch.tv/channel</code>
+                    <code>rumble.com/embed/ID</code>
+                    <code>kick.com/channel</code>
                 </div>
                 <button id="submitVideo" class="submit-btn" type="button">Add Video</button>
             </div>
@@ -123,28 +122,7 @@
                 <button class="modal-close" id="closeLayoutModal" type="button">&times;</button>
             </div>
             <div class="modal-inner">
-                <div class="layout-grid">
-                    <button class="lay-opt" data-layout="1" type="button">
-                        <div class="lay-thumb t1"><div></div></div>
-                        <span>Single</span>
-                    </button>
-                    <button class="lay-opt active" data-layout="2" type="button">
-                        <div class="lay-thumb t2"><div></div><div></div></div>
-                        <span>2 Column</span>
-                    </button>
-                    <button class="lay-opt" data-layout="3" type="button">
-                        <div class="lay-thumb t3"><div></div><div></div><div></div></div>
-                        <span>3 Column</span>
-                    </button>
-                    <button class="lay-opt" data-layout="2x1" type="button">
-                        <div class="lay-thumb t2x1"><div class="wide"></div><div></div><div></div></div>
-                        <span>Featured</span>
-                    </button>
-                    <button class="lay-opt" data-layout="auto" type="button">
-                        <div class="lay-thumb tauto"><div></div><div></div><div></div><div></div></div>
-                        <span>Auto</span>
-                    </button>
-                </div>
+                <div class="layout-grid" id="layoutGrid"></div>
             </div>
         </div>
     </div>
@@ -154,7 +132,7 @@
         <div class="modal-sheet modal-sm">
             <div class="modal-handle"></div>
             <div class="modal-inner" style="padding-top:20px">
-                <p id="confirmText" class="confirm-text">Are you sure?</p>
+                <p id="confirmText" class="confirm-text"></p>
                 <div class="confirm-btns">
                     <button id="confirmNo" class="conf-btn cancel" type="button">Cancel</button>
                     <button id="confirmYes" class="conf-btn yes" type="button">Confirm</button>
