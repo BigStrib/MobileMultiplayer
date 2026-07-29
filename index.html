@@ -12,12 +12,10 @@
 </head>
 <body>
 
-    <!-- FLOATING ACTION BUTTON - always visible -->
     <button id="fab" class="fab" type="button">
         <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
     </button>
 
-    <!-- MENU PANEL -->
     <div id="menuPanel" class="menu-panel hidden">
         <button class="menu-item" data-action="add" type="button">
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
@@ -38,19 +36,16 @@
     </div>
     <div id="menuOverlay" class="menu-overlay hidden"></div>
 
-    <!-- VIDEO GRID -->
     <div id="videoGrid" class="video-grid"></div>
 
-    <!-- EMPTY STATE -->
     <div id="emptyState" class="empty-state">
         <div class="empty-icon">
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
         </div>
-        <p>Tap the menu button to add videos</p>
+        <p>Tap the menu to add videos</p>
         <p class="sub">YouTube &bull; Twitch &bull; Rumble &bull; Kick</p>
     </div>
 
-    <!-- SELECT MODE BAR -->
     <div id="selectBar" class="select-bar hidden">
         <div class="select-bar-inner">
             <span id="selectLabel">Tap a video to select</span>
@@ -58,8 +53,11 @@
         </div>
     </div>
 
-    <!-- SELECTED VIDEO ACTIONS -->
     <div id="actionBar" class="action-bar hidden">
+        <button class="act-btn" data-action="volume" type="button">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+            <span>Unmute</span>
+        </button>
         <button class="act-btn" data-action="move-left" type="button">
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
             <span>Left</span>
@@ -82,16 +80,6 @@
         </button>
     </div>
 
-    <!-- YT LIVE VOLUME CONTROL -->
-    <div id="ytVolPanel" class="yt-vol-panel hidden">
-        <div class="yt-vol-inner">
-            <svg class="yt-vol-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-            <input type="range" id="ytVolSlider" min="0" max="100" value="100" class="yt-vol-slider">
-            <span id="ytVolVal" class="yt-vol-val">100</span>
-        </div>
-    </div>
-
-    <!-- ADD MODAL -->
     <div id="addModal" class="modal-wrap hidden">
         <div class="modal-bg"></div>
         <div class="modal-sheet">
@@ -115,23 +103,15 @@
                     <p>Supported formats:</p>
                     <code>youtube.com/watch?v=xxxxx</code>
                     <code>youtu.be/xxxxx</code>
-                    <code>youtube.com/live/xxxxx</code>
                     <code>twitch.tv/channelname</code>
                     <code>rumble.com/embed/xxxxx</code>
                     <code>kick.com/channelname</code>
-                </div>
-                <div class="note">
-                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-                    <div>
-                        <strong>Audio:</strong> Tap any video directly to use its native controls. YouTube live streams have a dedicated volume slider in the menu.
-                    </div>
                 </div>
                 <button id="submitVideo" class="submit-btn" type="button">Add Video</button>
             </div>
         </div>
     </div>
 
-    <!-- LAYOUT MODAL -->
     <div id="layoutModal" class="modal-wrap hidden">
         <div class="modal-bg"></div>
         <div class="modal-sheet">
@@ -160,23 +140,22 @@
                     </button>
                     <button class="lay-opt" data-layout="auto" type="button">
                         <div class="lay-thumb tauto"><div></div><div></div><div></div><div></div></div>
-                        <span>Auto Fit</span>
+                        <span>Auto</span>
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- CONFIRM MODAL -->
     <div id="confirmModal" class="modal-wrap hidden">
         <div class="modal-bg"></div>
-        <div class="modal-sheet modal-sheet-sm">
+        <div class="modal-sheet modal-sm">
             <div class="modal-handle"></div>
             <div class="modal-inner" style="padding-top:20px">
                 <p id="confirmText" class="confirm-text">Are you sure?</p>
                 <div class="confirm-btns">
-                    <button id="confirmNo" class="confirm-btn cancel" type="button">Cancel</button>
-                    <button id="confirmYes" class="confirm-btn danger" type="button">Confirm</button>
+                    <button id="confirmNo" class="conf-btn cancel" type="button">Cancel</button>
+                    <button id="confirmYes" class="conf-btn yes" type="button">Confirm</button>
                 </div>
             </div>
         </div>
