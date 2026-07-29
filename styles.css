@@ -14,7 +14,6 @@
     --accent: #6C5CE7;
     --accent-light: #a29bfe;
     --danger: #e74c3c;
-    --green: #2ecc71;
     --sel: #e74c3c;
     --yt: #f00;
     --tw: #9146ff;
@@ -75,6 +74,11 @@ button { cursor: pointer; font-family: inherit; }
     top: 0; left: 0; right: 0; bottom: 0;
     display: grid;
     gap: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    align-content: stretch;
+    justify-content: stretch;
 }
 .video-grid[data-cols="1"] { grid-template-columns: 1fr; }
 .video-grid[data-cols="2"] { grid-template-columns: 1fr 1fr; }
@@ -87,6 +91,10 @@ button { cursor: pointer; font-family: inherit; }
     background: #000;
     min-width: 0;
     min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    outline: none;
 }
 .video-cell iframe {
     position: absolute;
@@ -94,32 +102,36 @@ button { cursor: pointer; font-family: inherit; }
     width: 100%; height: 100%;
     border: none;
     display: block;
+    margin: 0; padding: 0;
 }
 
-/* Thin select edges - only the borders are clickable for selecting */
-.video-cell .sel-border {
+/* Edge select zones */
+.video-cell .sel-edge {
     position: absolute;
     z-index: 20;
     background: transparent;
     cursor: pointer;
 }
-.video-cell .sel-border.top    { top: 0; left: 0; right: 0; height: 14px; }
-.video-cell .sel-border.bottom { bottom: 0; left: 0; right: 0; height: 14px; }
-.video-cell .sel-border.left   { top: 0; bottom: 0; left: 0; width: 14px; }
-.video-cell .sel-border.right  { top: 0; bottom: 0; right: 0; width: 14px; }
+.video-cell .sel-edge.e-top    { top: 0; left: 0; right: 0; height: 16px; }
+.video-cell .sel-edge.e-bottom { bottom: 0; left: 0; right: 0; height: 16px; }
+.video-cell .sel-edge.e-left   { top: 0; bottom: 0; left: 0; width: 16px; }
+.video-cell .sel-edge.e-right  { top: 0; bottom: 0; right: 0; width: 16px; }
 
-/* Selected state */
-.video-cell.selected {
-    outline: 2px solid var(--sel);
-    outline-offset: -2px;
-    z-index: 15;
+/* Selected = red outline */
+.video-cell.selected::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border: 2px solid var(--sel);
+    pointer-events: none;
+    z-index: 30;
 }
 
-/* Platform badge */
+/* Badge */
 .video-cell .badge {
     position: absolute;
     top: 5px; left: 5px;
-    z-index: 22;
+    z-index: 31;
     padding: 2px 7px;
     border-radius: 4px;
     font-size: 9px;
@@ -135,12 +147,11 @@ button { cursor: pointer; font-family: inherit; }
 .badge.rumble  { background: var(--ru); color: #000; }
 .badge.kick    { background: var(--ki); color: #000; }
 
-/* PiP */
+/* PiP child */
 .video-cell.pip-child {
     position: absolute !important;
     bottom: 16px; right: 16px;
-    width: 38% !important;
-    height: 28% !important;
+    width: 38% !important; height: 28% !important;
     z-index: 25;
     border-radius: 10px;
     box-shadow: 0 4px 24px rgba(0,0,0,.6);
@@ -191,7 +202,7 @@ button { cursor: pointer; font-family: inherit; }
     display: flex; flex-direction: column;
     align-items: center; gap: 3px;
     background: none; border: none;
-    color: #fff; padding: 5px 9px;
+    color: #fff; padding: 5px 12px;
 }
 .ctrl-btn:active { transform: scale(.9); }
 .ctrl-btn svg {
@@ -204,19 +215,6 @@ button { cursor: pointer; font-family: inherit; }
 .ctrl-btn span { font-size: 10px; font-weight: 600; opacity: .7; }
 .ctrl-btn.danger svg { background: rgba(231,76,60,.3); }
 .ctrl-btn.danger:hover svg { background: rgba(231,76,60,.5); }
-
-/* ====== SELECT BAR ====== */
-.select-bar {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    z-index: 190;
-    text-align: center;
-    padding: 10px 16px calc(var(--safe-b) + 10px);
-    background: linear-gradient(0deg, rgba(0,0,0,.8) 0%, transparent 100%);
-    transition: opacity .3s;
-}
-.select-bar.hidden { opacity: 0; pointer-events: none; }
-.select-bar p { font-size: 12px; color: var(--dim); }
 
 /* ====== MODALS ====== */
 .modal-wrap {
@@ -347,9 +345,9 @@ button { cursor: pointer; font-family: inherit; }
     border-radius: 3px; overflow: hidden;
 }
 .lay-thumb div { background: currentColor; opacity: .35; border-radius: 2px; }
-.t1  { grid-template-columns: 1fr; }
-.t2  { grid-template-columns: 1fr 1fr; }
-.t3  { grid-template-columns: 1fr 1fr 1fr; }
+.t1 { grid-template-columns: 1fr; }
+.t2 { grid-template-columns: 1fr 1fr; }
+.t3 { grid-template-columns: 1fr 1fr 1fr; }
 .t2x1 { grid-template-columns: 1fr 1fr; }
 .t2x1 .wide { grid-column: 1 / -1; }
 .tpip { position: relative; grid-template-columns: 1fr; }

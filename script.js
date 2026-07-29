@@ -6,7 +6,8 @@
         layout: '2',
         activeIndex: -1,
         uiVisible: true,
-        hideTimer: null
+        hideTimer: null,
+        keepAliveTimers: {}
     };
 
     var dom = {};
@@ -20,7 +21,6 @@
         dom.addModal = grab('addModal');
         dom.layoutModal = grab('layoutModal');
         dom.controlsBar = grab('controlsBar');
-        dom.selectBar = grab('selectBar');
         dom.urlInput = grab('urlInput');
         dom.addBtn = grab('addBtn');
         dom.layoutBtn = grab('layoutBtn');
@@ -54,7 +54,7 @@
         m = url.match(/twitch\.tv\/videos\/(\d+)/);
         if (m) return { platform: 'twitch', id: m[1], type: 'vod' };
         m = url.match(/twitch\.tv\/([a-zA-Z0-9_]+)\/?$/);
-        if (m && ['videos','clips','about','schedule'].indexOf(m[1]) === -1) {
+        if (m && ['videos', 'clips', 'about', 'schedule'].indexOf(m[1]) === -1) {
             return { platform: 'twitch', id: m[1], type: 'channel' };
         }
 
@@ -82,10 +82,18 @@
         var host = window.location.hostname || 'localhost';
         switch (parsed.platform) {
             case 'youtube':
+                // enablejsapi=1 allows postMessage control
+                // We start muted so autoplay works, user unmutes via native controls
                 if (parsed.type === 'channel') {
-                    return 'https://www.youtube.com/embed/live_stream?channel=' + parsed.id + '&autoplay=1&mute=1&playsinline=1&enablejsapi=1';
+                    return 'https://www.youtube.com/embed/live_stream?channel=' + parsed.id +
+                        '&autoplay=1&mute=1&playsinline=1&enablejsapi=1&origin=' +
+                        encodeURIComponent(window.location.origin) +
+                        '&widget_referrer=' + encodeURIComponent(window.location.href);
                 }
-                return 'https://www.youtube.com/embed/' + parsed.id + '?autoplay=1&mute=1&playsinline=1&rel=0&enablejsapi=1';
+                return 'https://www.youtube.com/embed/' + parsed.id +
+                    '?autoplay=1&mute=1&playsinline=1&rel=0&enablejsapi=1&origin=' +
+                    encodeURIComponent(window.location.origin) +
+                    '&widget_referrer=' + encodeURIComponent(window.location.href);
             case 'twitch':
                 if (parsed.type === 'clip') return 'https://clips.twitch.tv/embed?clip=' + parsed.id + '&parent=' + host + '&autoplay=true&muted=true';
                 if (parsed.type === 'vod') return 'https://player.twitch.tv/?video=v' + parsed.id + '&parent=' + host + '&autoplay=true&muted=true';
@@ -99,6 +107,77 @@
         return null;
     }
 
+    // ===== YOUTUBE KEEP-ALIVE =====
+    // YouTube iframes can auto-mute or pause when not focused.
+    // We send periodic postMessage pings to keep them playing.
+    function startYouTubeKeepAlive(videoId, iframe) {
+        stopYouTubeKeepAlive(videoId);
+
+        // Send play command every 15 seconds to prevent YT from pausing
+        state.keepAliveTimers[videoId] = setInterval(function () {
+            try {
+                // YT iframe API postMessage to keep playing
+                iframe.contentWindow.postMessage(JSON.stringify({
+                    event: 'command',
+                    func: 'playVideo',
+                    args: []
+                }), '*');
+            } catch (e) {
+                // cross-origin may block, that's ok
+            }
+        }, 15000);
+    }
+
+    function stopYouTubeKeepAlive(videoId) {
+        if (state.keepAliveTimers[videoId]) {
+            clearInterval(state.keepAliveTimers[videoId]);
+            delete state.keepAliveTimers[videoId];
+        }
+    }
+
+    function stopAllKeepAlive() {
+        for (var key in state.keepAliveTimers) {
+            clearInterval(state.keepAliveTimers[key]);
+        }
+        state.keepAliveTimers = {};
+    }
+
+    // Listen for YouTube state changes via postMessage
+    function setupYouTubeListener() {
+        window.addEventListener('message', function (e) {
+            try {
+                var data;
+                if (typeof e.data === 'string') {
+                    data = JSON.parse(e.data);
+                } else {
+                    data = e.data;
+                }
+
+                // YouTube sends info with event "infoDelivery" or "onStateChange"
+                // State 2 = paused, we want to resume
+                if (data && data.event === 'onStateChange' && data.info === 2) {
+                    // Find the iframe that sent this
+                    var iframes = dom.videoGrid.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        try {
+                            if (iframes[i].contentWindow === e.source) {
+                                // Send play command
+                                iframes[i].contentWindow.postMessage(JSON.stringify({
+                                    event: 'command',
+                                    func: 'playVideo',
+                                    args: []
+                                }), '*');
+                                break;
+                            }
+                        } catch (ex) {}
+                    }
+                }
+            } catch (ex) {
+                // Not JSON or not for us
+            }
+        });
+    }
+
     // ===== VIDEO MANAGEMENT =====
     function addVideo(url) {
         var parsed = parseURL(url);
@@ -106,7 +185,7 @@
         var src = buildEmbed(parsed);
         if (!src) { toast('Unsupported', true); return false; }
         state.videos.push({
-            id: Date.now() + '' + Math.random(),
+            id: 'v_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
             parsed: parsed,
             platform: parsed.platform,
             embedSrc: src
@@ -118,6 +197,8 @@
     }
 
     function removeVideo(i) {
+        var v = state.videos[i];
+        if (v) stopYouTubeKeepAlive(v.id);
         state.videos.splice(i, 1);
         state.activeIndex = -1;
         hideUI();
@@ -136,13 +217,23 @@
     }
 
     function reloadVideo(i) {
+        var v = state.videos[i];
+        if (!v) return;
         var cell = getCellAt(i);
         if (!cell) return;
         var iframe = cell.querySelector('iframe');
         if (!iframe) return;
         var src = iframe.src;
         iframe.src = '';
-        setTimeout(function () { iframe.src = src; }, 100);
+        setTimeout(function () {
+            iframe.src = src;
+            // Restart keep alive for YT
+            if (v.platform === 'youtube') {
+                setTimeout(function () {
+                    startYouTubeKeepAlive(v.id, iframe);
+                }, 3000);
+            }
+        }, 150);
         toast('Reloading...');
     }
 
@@ -153,6 +244,8 @@
 
     // ===== RENDER =====
     function render() {
+        stopAllKeepAlive();
+
         var grid = dom.videoGrid;
         grid.innerHTML = '';
         var count = state.videos.length;
@@ -197,43 +290,60 @@
             if (layout === 'pip' && i > 0) cell.className += ' pip-child';
             cell.setAttribute('data-idx', i);
 
-            // iframe - user can interact directly with native player controls
             var iframe = document.createElement('iframe');
             iframe.src = v.embedSrc;
             iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
             iframe.setAttribute('allowfullscreen', '');
             iframe.setAttribute('playsinline', '');
+            iframe.id = 'iframe_' + v.id;
 
-            // Thin edge borders for selection - don't cover the video center
-            var borderTop = document.createElement('div');
-            borderTop.className = 'sel-border top';
-            borderTop.setAttribute('data-idx', i);
+            // Edge zones for selecting
+            var eTop = document.createElement('div');
+            eTop.className = 'sel-edge e-top';
+            eTop.setAttribute('data-idx', i);
 
-            var borderBottom = document.createElement('div');
-            borderBottom.className = 'sel-border bottom';
-            borderBottom.setAttribute('data-idx', i);
+            var eBot = document.createElement('div');
+            eBot.className = 'sel-edge e-bottom';
+            eBot.setAttribute('data-idx', i);
 
-            var borderLeft = document.createElement('div');
-            borderLeft.className = 'sel-border left';
-            borderLeft.setAttribute('data-idx', i);
+            var eLeft = document.createElement('div');
+            eLeft.className = 'sel-edge e-left';
+            eLeft.setAttribute('data-idx', i);
 
-            var borderRight = document.createElement('div');
-            borderRight.className = 'sel-border right';
-            borderRight.setAttribute('data-idx', i);
+            var eRight = document.createElement('div');
+            eRight.className = 'sel-edge e-right';
+            eRight.setAttribute('data-idx', i);
 
-            // Badge
             var badge = document.createElement('span');
             badge.className = 'badge ' + v.platform;
             badge.textContent = v.platform;
 
             cell.appendChild(iframe);
-            cell.appendChild(borderTop);
-            cell.appendChild(borderBottom);
-            cell.appendChild(borderLeft);
-            cell.appendChild(borderRight);
+            cell.appendChild(eTop);
+            cell.appendChild(eBot);
+            cell.appendChild(eLeft);
+            cell.appendChild(eRight);
             cell.appendChild(badge);
 
             grid.appendChild(cell);
+
+            // Start YouTube keep-alive after iframe loads
+            if (v.platform === 'youtube') {
+                (function (vid, ifr) {
+                    ifr.addEventListener('load', function () {
+                        // Subscribe to YT events
+                        setTimeout(function () {
+                            try {
+                                ifr.contentWindow.postMessage(JSON.stringify({
+                                    event: 'listening',
+                                    id: 1
+                                }), '*');
+                            } catch (ex) {}
+                            startYouTubeKeepAlive(vid.id, ifr);
+                        }, 2000);
+                    });
+                })(v, iframe);
+            }
         }
     }
 
@@ -249,7 +359,6 @@
         }
 
         dom.controlsBar.classList.remove('hidden');
-        dom.selectBar.classList.add('hidden');
         dom.topBar.classList.remove('hidden');
         resetTimer();
     }
@@ -263,8 +372,6 @@
         }
 
         dom.controlsBar.classList.add('hidden');
-        dom.selectBar.classList.add('hidden');
-
         if (state.videos.length > 0) {
             dom.topBar.classList.add('hidden');
             state.uiVisible = false;
@@ -340,10 +447,30 @@
         }
     }
 
+    // Page visibility - handle when user comes back to the page
+    function setupVisibilityHandler() {
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') {
+                // User came back, send play commands to all YT iframes
+                var iframes = dom.videoGrid.querySelectorAll('iframe');
+                for (var i = 0; i < state.videos.length; i++) {
+                    if (state.videos[i].platform === 'youtube' && iframes[i]) {
+                        try {
+                            iframes[i].contentWindow.postMessage(JSON.stringify({
+                                event: 'command',
+                                func: 'playVideo',
+                                args: []
+                            }), '*');
+                        } catch (ex) {}
+                    }
+                }
+            }
+        });
+    }
+
     // ===== WIRE EVENTS =====
     function wire() {
 
-        // ADD
         dom.addBtn.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
@@ -352,7 +479,6 @@
             setTimeout(function () { dom.urlInput.focus(); }, 200);
         });
 
-        // LAYOUT
         dom.layoutBtn.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
@@ -360,7 +486,6 @@
             refreshLayOpts();
         });
 
-        // CLOSE MODALS
         dom.closeAddModal.addEventListener('click', function (e) {
             e.preventDefault();
             closeModal('addModal');
@@ -368,6 +493,7 @@
         dom.addModal.querySelector('.modal-bg').addEventListener('click', function () {
             closeModal('addModal');
         });
+
         dom.closeLayoutModal.addEventListener('click', function (e) {
             e.preventDefault();
             closeModal('layoutModal');
@@ -376,7 +502,6 @@
             closeModal('layoutModal');
         });
 
-        // PASTE
         dom.pasteBtn.addEventListener('click', function (e) {
             e.preventDefault();
             if (navigator.clipboard && navigator.clipboard.readText) {
@@ -388,7 +513,6 @@
             }
         });
 
-        // SUBMIT
         dom.submitVideo.addEventListener('click', function (e) {
             e.preventDefault();
             var url = dom.urlInput.value.trim();
@@ -405,13 +529,9 @@
         });
 
         dom.urlInput.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                dom.submitVideo.click();
-            }
+            if (e.key === 'Enter') { e.preventDefault(); dom.submitVideo.click(); }
         });
 
-        // LAYOUT OPTIONS
         var layOpts = document.querySelectorAll('.lay-opt');
         for (var i = 0; i < layOpts.length; i++) {
             layOpts[i].addEventListener('click', function (e) {
@@ -424,11 +544,11 @@
             });
         }
 
-        // SEL-BORDER TAPS (delegated)
+        // Edge taps for selection (delegated)
         dom.videoGrid.addEventListener('click', function (e) {
             var el = e.target;
             while (el && el !== dom.videoGrid) {
-                if (el.classList && el.classList.contains('sel-border')) {
+                if (el.classList && el.classList.contains('sel-edge')) {
                     e.preventDefault();
                     e.stopPropagation();
                     var idx = parseInt(el.getAttribute('data-idx'), 10);
@@ -443,15 +563,12 @@
             }
         });
 
-        // CONTROLS (delegated)
+        // Controls (delegated)
         dom.controlsBar.addEventListener('click', function (e) {
             var el = e.target;
             var btn = null;
             while (el && el !== dom.controlsBar) {
-                if (el.classList && el.classList.contains('ctrl-btn')) {
-                    btn = el;
-                    break;
-                }
+                if (el.classList && el.classList.contains('ctrl-btn')) { btn = el; break; }
                 el = el.parentElement;
             }
             if (!btn) return;
@@ -460,8 +577,7 @@
 
             var action = btn.getAttribute('data-action');
             var idx = state.activeIndex;
-            if (idx < 0 && action !== 'deselect') return;
-
+            if (idx < 0) return;
             resetTimer();
 
             switch (action) {
@@ -478,13 +594,10 @@
                     removeVideo(idx);
                     toast('Removed');
                     break;
-                case 'deselect':
-                    hideUI();
-                    break;
             }
         });
 
-        // CLICK OUTSIDE
+        // Click on black area / outside to deselect
         document.addEventListener('click', function (e) {
             if (state.videos.length === 0) return;
             var el = e.target;
@@ -492,9 +605,12 @@
                 if (el.id === 'addModal' || el.id === 'layoutModal') return;
                 if (el.id === 'topBar') return;
                 if (el.id === 'controlsBar') return;
-                if (el.classList && el.classList.contains('sel-border')) return;
+                if (el.classList && el.classList.contains('sel-edge')) return;
+                if (el.tagName === 'IFRAME') return;
                 el = el.parentElement;
             }
+
+            // Clicked on black area or outside any video
             if (state.activeIndex >= 0) {
                 hideUI();
             } else {
@@ -502,7 +618,7 @@
             }
         });
 
-        // KEYBOARD
+        // Keyboard
         document.addEventListener('keydown', function (e) {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             if (e.key === 'Escape') {
@@ -515,7 +631,6 @@
             if (e.key === 'l' || e.key === 'L') { e.preventDefault(); dom.layoutBtn.click(); }
         });
 
-        // RESIZE
         window.addEventListener('resize', function () {
             if (state.videos.length > 0) {
                 var layout = state.layout;
@@ -549,6 +664,9 @@
         load();
         render();
         wire();
+        setupYouTubeListener();
+        setupVisibilityHandler();
+
         if (state.videos.length === 0) {
             dom.topBar.classList.remove('hidden');
         } else {
