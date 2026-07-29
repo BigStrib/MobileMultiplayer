@@ -1,658 +1,479 @@
-(function() {
+(function () {
     'use strict';
 
-    // ===== STATE =====
-    const state = {
+    /* ========================
+       STATE
+       ======================== */
+    var state = {
         videos: [],
         layout: '2',
-        fillMode: true,
-        activeVideoIndex: -1,
+        activeIndex: -1,
+        unmutedIndex: -1,
         uiVisible: true,
-        hideTimer: null,
-        dragSource: null
+        hideTimer: null
     };
 
-    // ===== DOM REFS =====
-    const $ = (sel) => document.querySelector(sel);
-    const $$ = (sel) => document.querySelectorAll(sel);
+    /* ========================
+       DOM CACHE
+       ======================== */
+    var dom = {};
 
-    const dom = {
-        topBar: $('#topBar'),
-        videoGrid: $('#videoGrid'),
-        emptyState: $('#emptyState'),
-        addModal: $('#addModal'),
-        layoutModal: $('#layoutModal'),
-        controlsOverlay: $('#controlsOverlay'),
-        urlInput: $('#urlInput'),
-        addBtn: $('#addBtn'),
-        addVideoBtn: $('#addVideoBtn'),
-        layoutBtn: $('#layoutBtn'),
-        closeModal: $('#closeModal'),
-        closeLayoutModal: $('#closeLayoutModal'),
-        pasteBtn: $('#pasteBtn'),
-        fillToggle: $('#fillToggle'),
-        tapHint: $('#tapHint')
-    };
+    function grab(id) {
+        return document.getElementById(id);
+    }
 
-    // ===== URL PARSERS =====
-    const parsers = {
-        youtube(url) {
-            const patterns = [
-                /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
-                /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
-                /^([a-zA-Z0-9_-]{11})$/
-            ];
-            for (const p of patterns) {
-                const m = url.match(p);
-                if (m) return { platform: 'youtube', id: m[1] };
-            }
-            // YouTube playlist
-            const plMatch = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
-            const vidMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-            if (vidMatch) return { platform: 'youtube', id: vidMatch[1] };
+    function initDom() {
+        dom.topBar = grab('topBar');
+        dom.videoGrid = grab('videoGrid');
+        dom.emptyState = grab('emptyState');
+        dom.addModal = grab('addModal');
+        dom.layoutModal = grab('layoutModal');
+        dom.controlsBar = grab('controlsBar');
+        dom.urlInput = grab('urlInput');
+        dom.addBtn = grab('addBtn');
+        dom.layoutBtn = grab('layoutBtn');
+        dom.submitVideo = grab('submitVideo');
+        dom.closeAddModal = grab('closeAddModal');
+        dom.closeLayoutModal = grab('closeLayoutModal');
+        dom.pasteBtn = grab('pasteBtn');
+        dom.toastBox = grab('toastBox');
+    }
 
-            // YouTube channel live
-            const channelMatch = url.match(/youtube\.com\/@([^\/\?]+)/);
-            if (channelMatch) return { platform: 'youtube', id: channelMatch[1], type: 'channel' };
-
-            return null;
-        },
-
-        twitch(url) {
-            // Twitch clips
-            const clipMatch = url.match(/clips\.twitch\.tv\/([a-zA-Z0-9_-]+)/);
-            if (clipMatch) return { platform: 'twitch', id: clipMatch[1], type: 'clip' };
-
-            const clipMatch2 = url.match(/twitch\.tv\/\w+\/clip\/([a-zA-Z0-9_-]+)/);
-            if (clipMatch2) return { platform: 'twitch', id: clipMatch2[1], type: 'clip' };
-
-            // Twitch VOD
-            const vodMatch = url.match(/twitch\.tv\/videos\/(\d+)/);
-            if (vodMatch) return { platform: 'twitch', id: vodMatch[1], type: 'vod' };
-
-            // Twitch channel
-            const channelMatch = url.match(/twitch\.tv\/([a-zA-Z0-9_]+)\/?$/);
-            if (channelMatch && channelMatch[1] !== 'videos') {
-                return { platform: 'twitch', id: channelMatch[1], type: 'channel' };
-            }
-
-            // Plain channel name check
-            if (/^[a-zA-Z0-9_]{3,25}$/.test(url) && !url.includes('.')) {
-                return null; // Could be any platform
-            }
-
-            return null;
-        },
-
-        rumble(url) {
-            // Rumble embed
-            const embedMatch = url.match(/rumble\.com\/embed\/([a-zA-Z0-9]+)/);
-            if (embedMatch) return { platform: 'rumble', id: embedMatch[1], type: 'embed' };
-
-            // Rumble video page
-            const videoMatch = url.match(/rumble\.com\/([a-zA-Z0-9\-]+)\.html/);
-            if (videoMatch) return { platform: 'rumble', id: videoMatch[1], type: 'video' };
-
-            // Rumble general URL
-            const generalMatch = url.match(/rumble\.com\/([a-zA-Z0-9\-]+)/);
-            if (generalMatch) return { platform: 'rumble', id: generalMatch[1], type: 'video' };
-
-            return null;
-        },
-
-        kick(url) {
-            // Kick clip
-            const clipMatch = url.match(/kick\.com\/[^\/]+\?clip=([a-zA-Z0-9_-]+)/);
-            if (clipMatch) return { platform: 'kick', id: clipMatch[1], type: 'clip' };
-
-            // Kick video/VOD
-            const vodMatch = url.match(/kick\.com\/video\/([a-zA-Z0-9_-]+)/);
-            if (vodMatch) return { platform: 'kick', id: vodMatch[1], type: 'vod' };
-
-            // Kick channel
-            const channelMatch = url.match(/kick\.com\/([a-zA-Z0-9_]+)\/?$/);
-            if (channelMatch) return { platform: 'kick', id: channelMatch[1], type: 'channel' };
-
-            return null;
-        }
-    };
-
+    /* ========================
+       URL PARSING
+       ======================== */
     function parseURL(input) {
         input = input.trim();
-
-        // Add protocol if missing
-        let url = input;
-        if (!url.includes('://') && url.includes('.')) {
+        var url = input;
+        if (url.indexOf('://') === -1 && url.indexOf('.') !== -1) {
             url = 'https://' + url;
         }
 
-        // Try each parser
-        const yt = parsers.youtube(url);
-        if (yt) return yt;
+        var m;
 
-        const tw = parsers.twitch(url);
-        if (tw) return tw;
+        // YouTube
+        m = url.match(/(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/|youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/);
+        if (m) return { platform: 'youtube', id: m[1], type: 'video' };
 
-        const ru = parsers.rumble(url);
-        if (ru) return ru;
+        m = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+        if (m) return { platform: 'youtube', id: m[1], type: 'video' };
 
-        const ki = parsers.kick(url);
-        if (ki) return ki;
+        m = url.match(/youtube\.com\/@([^\/\?]+)/);
+        if (m) return { platform: 'youtube', id: m[1], type: 'channel' };
 
-        // Check if it looks like an embed URL already
-        if (url.includes('iframe') || url.includes('embed')) {
-            return { platform: 'custom', embedUrl: url };
+        // Twitch
+        m = url.match(/clips\.twitch\.tv\/([a-zA-Z0-9_-]+)/);
+        if (m) return { platform: 'twitch', id: m[1], type: 'clip' };
+
+        m = url.match(/twitch\.tv\/\w+\/clip\/([a-zA-Z0-9_-]+)/);
+        if (m) return { platform: 'twitch', id: m[1], type: 'clip' };
+
+        m = url.match(/twitch\.tv\/videos\/(\d+)/);
+        if (m) return { platform: 'twitch', id: m[1], type: 'vod' };
+
+        m = url.match(/twitch\.tv\/([a-zA-Z0-9_]+)\/?$/);
+        if (m && ['videos','clips','about','schedule'].indexOf(m[1]) === -1) {
+            return { platform: 'twitch', id: m[1], type: 'channel' };
+        }
+
+        // Rumble
+        m = url.match(/rumble\.com\/embed\/([a-zA-Z0-9]+)/);
+        if (m) return { platform: 'rumble', id: m[1], type: 'embed' };
+
+        if (url.indexOf('rumble.com') !== -1) {
+            m = url.match(/rumble\.com\/([a-zA-Z0-9\-]+?)(?:\.html)?(?:\?|$)/);
+            if (m) return { platform: 'rumble', id: m[1], type: 'video' };
+        }
+
+        // Kick
+        m = url.match(/kick\.com\/[^\/]+\?clip=([a-zA-Z0-9_-]+)/);
+        if (m) return { platform: 'kick', id: m[1], type: 'clip' };
+
+        m = url.match(/kick\.com\/video\/([a-zA-Z0-9_-]+)/);
+        if (m) return { platform: 'kick', id: m[1], type: 'vod' };
+
+        m = url.match(/kick\.com\/([a-zA-Z0-9_]+)\/?$/);
+        if (m) return { platform: 'kick', id: m[1], type: 'channel' };
+
+        // Bare YT id
+        if (/^[a-zA-Z0-9_-]{11}$/.test(input)) {
+            return { platform: 'youtube', id: input, type: 'video' };
         }
 
         return null;
     }
 
-    function getEmbedURL(parsed) {
-        const parent = window.location.hostname || 'localhost';
+    function buildEmbed(parsed, muted) {
+        var host = window.location.hostname || 'localhost';
+        var mi = muted ? 1 : 0;
+        var mb = muted ? 'true' : 'false';
 
         switch (parsed.platform) {
             case 'youtube':
                 if (parsed.type === 'channel') {
-                    return `https://www.youtube.com/embed/live_stream?channel=${parsed.id}&autoplay=1&mute=1&playsinline=1`;
+                    return 'https://www.youtube.com/embed/live_stream?channel=' + parsed.id + '&autoplay=1&mute=' + mi + '&playsinline=1';
                 }
-                return `https://www.youtube.com/embed/${parsed.id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1&controls=0`;
-
+                return 'https://www.youtube.com/embed/' + parsed.id + '?autoplay=1&mute=' + mi + '&playsinline=1&rel=0';
             case 'twitch':
-                if (parsed.type === 'clip') {
-                    return `https://clips.twitch.tv/embed?clip=${parsed.id}&parent=${parent}&autoplay=true&muted=true`;
-                }
-                if (parsed.type === 'vod') {
-                    return `https://player.twitch.tv/?video=v${parsed.id}&parent=${parent}&autoplay=true&muted=true`;
-                }
-                return `https://player.twitch.tv/?channel=${parsed.id}&parent=${parent}&autoplay=true&muted=true`;
-
+                if (parsed.type === 'clip') return 'https://clips.twitch.tv/embed?clip=' + parsed.id + '&parent=' + host + '&autoplay=true&muted=' + mb;
+                if (parsed.type === 'vod') return 'https://player.twitch.tv/?video=v' + parsed.id + '&parent=' + host + '&autoplay=true&muted=' + mb;
+                return 'https://player.twitch.tv/?channel=' + parsed.id + '&parent=' + host + '&autoplay=true&muted=' + mb;
             case 'rumble':
-                if (parsed.type === 'embed') {
-                    return `https://rumble.com/embed/${parsed.id}/?autoplay=1&mute=1`;
-                }
-                return `https://rumble.com/embed/${parsed.id}/?autoplay=1&mute=1`;
-
+                return 'https://rumble.com/embed/' + parsed.id + '/?autoplay=1&mute=' + mi;
             case 'kick':
-                if (parsed.type === 'clip') {
-                    return `https://player.kick.com/clip/${parsed.id}?autoplay=true&muted=true`;
-                }
-                if (parsed.type === 'vod') {
-                    return `https://player.kick.com/${parsed.id}?autoplay=true&muted=true`;
-                }
-                return `https://player.kick.com/${parsed.id}?autoplay=true&muted=true`;
-
-            case 'custom':
-                return parsed.embedUrl;
-
-            default:
-                return null;
+                if (parsed.type === 'clip') return 'https://player.kick.com/clip/' + parsed.id + '?autoplay=true&muted=' + mb;
+                return 'https://player.kick.com/' + parsed.id + '?autoplay=true&muted=' + mb;
         }
+        return null;
     }
 
-    // ===== VIDEO MANAGEMENT =====
+    /* ========================
+       VIDEO OPERATIONS
+       ======================== */
     function addVideo(url) {
-        const parsed = parseURL(url);
-        if (!parsed) {
-            showToast('Could not parse URL', true);
-            return false;
-        }
+        var parsed = parseURL(url);
+        if (!parsed) { toast('Cannot parse URL', true); return false; }
+        var test = buildEmbed(parsed, true);
+        if (!test) { toast('Unsupported', true); return false; }
 
-        const embedUrl = getEmbedURL(parsed);
-        if (!embedUrl) {
-            showToast('Unsupported URL format', true);
-            return false;
-        }
+        state.videos.push({
+            id: Date.now() + '' + Math.random(),
+            parsed: parsed,
+            platform: parsed.platform
+        });
 
-        const video = {
-            id: Date.now() + Math.random(),
-            url: url,
-            embedUrl: embedUrl,
-            platform: parsed.platform,
-            muted: true
-        };
-
-        state.videos.push(video);
-        renderVideos();
-        saveState();
-        showToast(`${parsed.platform} video added`);
+        render();
+        save();
+        toast(parsed.platform + ' added');
         return true;
     }
 
-    function removeVideo(index) {
-        state.videos.splice(index, 1);
-        state.activeVideoIndex = -1;
-        hideControls();
-        renderVideos();
-        saveState();
+    function removeVideo(i) {
+        if (state.unmutedIndex === i) state.unmutedIndex = -1;
+        else if (state.unmutedIndex > i) state.unmutedIndex--;
+        state.videos.splice(i, 1);
+        state.activeIndex = -1;
+        hideUI();
+        render();
+        save();
     }
 
-    function moveVideo(fromIndex, toIndex) {
-        if (toIndex < 0 || toIndex >= state.videos.length) return;
-        const [video] = state.videos.splice(fromIndex, 1);
-        state.videos.splice(toIndex, 0, video);
-        state.activeVideoIndex = toIndex;
-        renderVideos();
-        saveState();
+    function moveVideo(from, to) {
+        if (to < 0 || to >= state.videos.length) return;
+        if (state.unmutedIndex === from) state.unmutedIndex = to;
+        else if (state.unmutedIndex === to) state.unmutedIndex = from;
+        var v = state.videos.splice(from, 1)[0];
+        state.videos.splice(to, 0, v);
+        state.activeIndex = to;
+        render();
+        showUI(to);
+        save();
     }
 
-    function reloadVideo(index) {
-        const cells = $$('.video-cell');
-        if (cells[index]) {
-            const iframe = cells[index].querySelector('iframe');
-            if (iframe) {
-                const src = iframe.src;
-                iframe.src = '';
-                setTimeout(() => { iframe.src = src; }, 100);
-            }
-        }
-    }
-
-    function toggleMute(index) {
-        const video = state.videos[index];
-        if (!video) return;
-
-        video.muted = !video.muted;
-
-        // For YouTube, we can try postMessage
-        const cells = $$('.video-cell');
-        const iframe = cells[index]?.querySelector('iframe');
-
-        if (iframe) {
-            let newSrc = video.embedUrl;
-            if (video.platform === 'youtube') {
-                newSrc = newSrc.replace(/mute=[01]/, `mute=${video.muted ? 1 : 0}`);
-            } else if (video.platform === 'twitch') {
-                newSrc = newSrc.replace(/muted=(true|false)/, `muted=${video.muted}`);
-            } else if (video.platform === 'kick') {
-                newSrc = newSrc.replace(/muted=(true|false)/, `muted=${video.muted}`);
-            } else if (video.platform === 'rumble') {
-                newSrc = newSrc.replace(/mute=[01]/, `mute=${video.muted ? 1 : 0}`);
-            }
-            video.embedUrl = newSrc;
-            iframe.src = newSrc;
-        }
-
-        updateMuteButton(index);
-        saveState();
-    }
-
-    function updateMuteButton(index) {
-        const muteBtn = $(`.ctrl-btn[data-action="mute"]`);
-        if (!muteBtn) return;
-        const video = state.videos[index];
-        if (!video) return;
-
-        if (video.muted) {
-            muteBtn.classList.remove('muted');
-            muteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>`;
+    function toggleUnmute(i) {
+        if (state.unmutedIndex === i) {
+            state.unmutedIndex = -1;
+            reloadCell(i, true);
+            toast('Muted');
         } else {
-            muteBtn.classList.add('muted');
-            muteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>`;
+            var prev = state.unmutedIndex;
+            if (prev >= 0 && prev < state.videos.length) {
+                reloadCell(prev, true);
+            }
+            state.unmutedIndex = i;
+            reloadCell(i, false);
+            toast('Audio ON');
+        }
+        refreshUnmuteBtn();
+        save();
+    }
+
+    function reloadCell(i, muted) {
+        var cell = getCellAt(i);
+        if (!cell) return;
+        var video = state.videos[i];
+        if (!video) return;
+        var iframe = cell.querySelector('iframe');
+        if (iframe) {
+            iframe.src = buildEmbed(video.parsed, muted);
+        }
+        setDot(cell, muted);
+    }
+
+    function getCellAt(i) {
+        var cells = dom.videoGrid.querySelectorAll('.video-cell');
+        return cells[i] || null;
+    }
+
+    function setDot(cell, muted) {
+        var dot = cell.querySelector('.mute-dot');
+        if (!dot) return;
+        dot.className = 'mute-dot ' + (muted ? 'muted' : 'unmuted');
+        dot.innerHTML = muted
+            ? '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>'
+            : '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
+    }
+
+    function refreshUnmuteBtn() {
+        var btn = dom.controlsBar.querySelector('[data-action="unmute"]');
+        if (!btn) return;
+        var isOn = (state.activeIndex >= 0 && state.unmutedIndex === state.activeIndex);
+        var svg = btn.querySelector('svg');
+        var span = btn.querySelector('span');
+        if (isOn) {
+            btn.classList.add('is-unmuted');
+            svg.innerHTML = '<path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+            span.textContent = 'Mute';
+        } else {
+            btn.classList.remove('is-unmuted');
+            svg.innerHTML = '<path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+            span.textContent = 'Unmute';
         }
     }
 
-    // ===== RENDER =====
-    function renderVideos() {
-        const grid = dom.videoGrid;
+    /* ========================
+       RENDER
+       ======================== */
+    function render() {
+        var grid = dom.videoGrid;
         grid.innerHTML = '';
-        grid.dataset.layout = state.layout;
 
-        if (state.videos.length === 0) {
+        var count = state.videos.length;
+        var layout = state.layout;
+
+        if (count === 0) {
             dom.emptyState.classList.remove('hidden');
+            grid.removeAttribute('data-cols');
+            grid.style.gridTemplateRows = '';
             return;
         }
-
         dom.emptyState.classList.add('hidden');
 
-        state.videos.forEach((video, index) => {
-            const cell = document.createElement('div');
-            cell.className = `video-cell${state.fillMode ? ' fill-mode' : ''}`;
-            cell.dataset.index = index;
-            cell.draggable = true;
-
-            if (index === state.activeVideoIndex) {
-                cell.classList.add('active');
-            }
-
-            cell.innerHTML = `
-                <iframe
-                    src="${video.embedUrl}"
-                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                    allowfullscreen
-                    loading="lazy"
-                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-presentation"
-                ></iframe>
-                <div class="video-tap-zone" data-index="${index}"></div>
-                <span class="platform-badge ${video.platform}">${video.platform}</span>
-                <div class="drag-handle" data-index="${index}">
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
-                </div>
-            `;
-
-            // Drag and drop
-            cell.addEventListener('dragstart', handleDragStart);
-            cell.addEventListener('dragend', handleDragEnd);
-            cell.addEventListener('dragover', handleDragOver);
-            cell.addEventListener('dragenter', handleDragEnter);
-            cell.addEventListener('dragleave', handleDragLeave);
-            cell.addEventListener('drop', handleDrop);
-
-            // Touch drag
-            cell.addEventListener('touchstart', handleTouchStart, { passive: false });
-            cell.addEventListener('touchmove', handleTouchMove, { passive: false });
-            cell.addEventListener('touchend', handleTouchEnd);
-
-            grid.appendChild(cell);
-        });
-
-        // Apply layout-specific row calculations
-        adjustGridRows();
-    }
-
-    function adjustGridRows() {
-        const grid = dom.videoGrid;
-        const count = state.videos.length;
-        const layout = state.layout;
-
-        if (layout === 'pip' || layout === '2x1') {
-            // PiP and Featured layouts handled by CSS
-            return;
-        }
-
-        let cols;
+        // Determine columns
+        var cols;
         switch (layout) {
             case '1': cols = 1; break;
             case '2': cols = 2; break;
             case '3': cols = 3; break;
-            case 'auto': cols = count <= 1 ? 1 : count <= 4 ? 2 : 3; break;
+            case '2x1': cols = 2; break;
+            case 'pip': cols = 1; break;
+            case 'auto':
+                cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
+                break;
             default: cols = 2;
         }
 
-        if (layout === 'auto') {
-            grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+        grid.setAttribute('data-cols', cols);
+
+        // Rows
+        if (layout === 'pip') {
+            grid.style.gridTemplateRows = '1fr';
+        } else if (layout === '2x1') {
+            var extra = Math.ceil(Math.max(0, count - 1) / 2);
+            grid.style.gridTemplateRows = 'repeat(' + (1 + extra) + ', 1fr)';
+        } else {
+            var rows = Math.max(1, Math.ceil(count / cols));
+            grid.style.gridTemplateRows = 'repeat(' + rows + ', 1fr)';
         }
 
-        const rows = Math.ceil(count / cols);
-        grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-    }
+        // Build cells
+        for (var i = 0; i < count; i++) {
+            var v = state.videos[i];
+            var muted = (state.unmutedIndex !== i);
+            var src = buildEmbed(v.parsed, muted);
 
-    // ===== DRAG & DROP (Desktop) =====
-    function handleDragStart(e) {
-        state.dragSource = parseInt(e.currentTarget.dataset.index);
-        e.currentTarget.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-    }
+            var cell = document.createElement('div');
+            cell.className = 'video-cell';
+            if (i === state.activeIndex) cell.className += ' selected';
 
-    function handleDragEnd(e) {
-        e.currentTarget.classList.remove('dragging');
-        $$('.video-cell').forEach(c => c.classList.remove('drag-over'));
-        state.dragSource = null;
-    }
+            // Layout-specific classes
+            if (layout === '2x1' && i === 0) cell.className += ' featured-main';
+            if (layout === 'pip' && i > 0) cell.className += ' pip-child';
 
-    function handleDragOver(e) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-    }
+            cell.setAttribute('data-idx', i);
 
-    function handleDragEnter(e) {
-        e.currentTarget.classList.add('drag-over');
-    }
+            var dotClass = muted ? 'muted' : 'unmuted';
+            var dotIcon = muted
+                ? '<path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>'
+                : '<path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
 
-    function handleDragLeave(e) {
-        e.currentTarget.classList.remove('drag-over');
-    }
+            cell.innerHTML =
+                '<iframe src="' + src + '" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen playsinline></iframe>' +
+                '<div class="tap-zone" data-idx="' + i + '"></div>' +
+                '<span class="badge ' + v.platform + '">' + v.platform + '</span>' +
+                '<div class="mute-dot ' + dotClass + '"><svg viewBox="0 0 24 24">' + dotIcon + '</svg></div>';
 
-    function handleDrop(e) {
-        e.preventDefault();
-        const target = parseInt(e.currentTarget.dataset.index);
-        if (state.dragSource !== null && state.dragSource !== target) {
-            swapVideos(state.dragSource, target);
-        }
-        e.currentTarget.classList.remove('drag-over');
-    }
-
-    // ===== TOUCH DRAG =====
-    let touchDragData = { active: false, startX: 0, startY: 0, index: -1, longPress: null };
-
-    function handleTouchStart(e) {
-        const index = parseInt(e.currentTarget.dataset.index);
-        const touch = e.touches[0];
-        touchDragData.startX = touch.clientX;
-        touchDragData.startY = touch.clientY;
-        touchDragData.index = index;
-
-        // Long press to start drag
-        touchDragData.longPress = setTimeout(() => {
-            touchDragData.active = true;
-            e.currentTarget.classList.add('dragging');
-            navigator.vibrate && navigator.vibrate(50);
-        }, 500);
-    }
-
-    function handleTouchMove(e) {
-        if (!touchDragData.active) {
-            const touch = e.touches[0];
-            const dx = Math.abs(touch.clientX - touchDragData.startX);
-            const dy = Math.abs(touch.clientY - touchDragData.startY);
-            if (dx > 10 || dy > 10) {
-                clearTimeout(touchDragData.longPress);
-            }
-            return;
-        }
-        e.preventDefault();
-
-        const touch = e.touches[0];
-        const target = document.elementFromPoint(touch.clientX, touch.clientY);
-        const cell = target?.closest('.video-cell');
-
-        $$('.video-cell').forEach(c => c.classList.remove('drag-over'));
-        if (cell && parseInt(cell.dataset.index) !== touchDragData.index) {
-            cell.classList.add('drag-over');
+            grid.appendChild(cell);
         }
     }
 
-    function handleTouchEnd(e) {
-        clearTimeout(touchDragData.longPress);
-
-        if (touchDragData.active) {
-            const touch = e.changedTouches[0];
-            const target = document.elementFromPoint(touch.clientX, touch.clientY);
-            const cell = target?.closest('.video-cell');
-
-            if (cell) {
-                const targetIndex = parseInt(cell.dataset.index);
-                if (targetIndex !== touchDragData.index) {
-                    swapVideos(touchDragData.index, targetIndex);
-                }
-            }
-
-            $$('.video-cell').forEach(c => {
-                c.classList.remove('dragging');
-                c.classList.remove('drag-over');
-            });
-        }
-
-        touchDragData.active = false;
-        touchDragData.index = -1;
-    }
-
-    function swapVideos(a, b) {
-        const temp = state.videos[a];
-        state.videos[a] = state.videos[b];
-        state.videos[b] = temp;
-        renderVideos();
-        saveState();
-    }
-
-    // ===== UI CONTROLS =====
-    function showControls(index) {
-        state.activeVideoIndex = index;
-
-        // Highlight active cell
-        $$('.video-cell').forEach((c, i) => {
-            c.classList.toggle('active', i === index);
-        });
-
-        // Show controls
-        dom.controlsOverlay.classList.remove('hidden');
-        dom.topBar.classList.remove('hidden');
+    /* ========================
+       UI SHOW / HIDE
+       ======================== */
+    function showUI(index) {
+        state.activeIndex = index;
         state.uiVisible = true;
 
-        updateMuteButton(index);
+        // Highlight
+        var cells = dom.videoGrid.querySelectorAll('.video-cell');
+        for (var i = 0; i < cells.length; i++) {
+            if (i === index) cells[i].classList.add('selected');
+            else cells[i].classList.remove('selected');
+        }
 
-        // Auto-hide
-        resetHideTimer();
+        dom.controlsBar.classList.remove('hidden');
+        dom.topBar.classList.remove('hidden');
+        refreshUnmuteBtn();
+        resetTimer();
     }
 
-    function hideControls() {
-        state.activeVideoIndex = -1;
-        $$('.video-cell').forEach(c => c.classList.remove('active'));
-        dom.controlsOverlay.classList.add('hidden');
+    function hideUI() {
+        state.activeIndex = -1;
+        state.uiVisible = false;
 
+        var cells = dom.videoGrid.querySelectorAll('.video-cell');
+        for (var i = 0; i < cells.length; i++) {
+            cells[i].classList.remove('selected');
+        }
+
+        dom.controlsBar.classList.add('hidden');
         if (state.videos.length > 0) {
             dom.topBar.classList.add('hidden');
         }
-
-        state.uiVisible = false;
         clearTimeout(state.hideTimer);
     }
 
-    function toggleUI() {
-        if (state.uiVisible && state.activeVideoIndex === -1) {
-            dom.topBar.classList.add('hidden');
-            state.uiVisible = false;
-        } else if (!state.uiVisible) {
+    function toggleTopBar() {
+        if (dom.topBar.classList.contains('hidden')) {
             dom.topBar.classList.remove('hidden');
             state.uiVisible = true;
-            resetHideTimer();
+            resetTimer();
+        } else {
+            hideUI();
         }
     }
 
-    function resetHideTimer() {
+    function resetTimer() {
         clearTimeout(state.hideTimer);
-        state.hideTimer = setTimeout(() => {
-            if (state.videos.length > 0) {
-                hideControls();
-            }
+        state.hideTimer = setTimeout(function () {
+            if (state.videos.length > 0) hideUI();
         }, 5000);
     }
 
-    // ===== MODALS =====
-    function openAddModal() {
-        dom.addModal.classList.remove('hidden');
-        dom.urlInput.value = '';
-        setTimeout(() => dom.urlInput.focus(), 300);
+    /* ========================
+       MODALS
+       ======================== */
+    function openModal(id) {
+        var el = grab(id);
+        if (el) el.classList.remove('hidden');
     }
 
-    function closeAddModal() {
-        dom.addModal.classList.add('hidden');
-        dom.urlInput.blur();
+    function closeModal(id) {
+        var el = grab(id);
+        if (el) el.classList.add('hidden');
     }
 
-    function openLayoutModal() {
-        dom.layoutModal.classList.remove('hidden');
-        updateLayoutSelection();
+    /* ========================
+       TOAST
+       ======================== */
+    function toast(msg, err) {
+        var box = dom.toastBox;
+        box.innerHTML = '';
+        var el = document.createElement('div');
+        el.className = 'toast' + (err ? ' err' : '');
+        el.textContent = msg;
+        box.appendChild(el);
+        setTimeout(function () {
+            if (el.parentNode) el.remove();
+        }, 2500);
     }
 
-    function closeLayoutModal() {
-        dom.layoutModal.classList.add('hidden');
-    }
-
-    function updateLayoutSelection() {
-        $$('.layout-option').forEach(opt => {
-            opt.classList.toggle('active', opt.dataset.layout === state.layout);
-        });
-    }
-
-    // ===== TOAST =====
-    function showToast(msg, isError = false) {
-        const existing = $('.toast');
-        if (existing) existing.remove();
-
-        const toast = document.createElement('div');
-        toast.className = `toast${isError ? ' error' : ''}`;
-        toast.textContent = msg;
-        document.body.appendChild(toast);
-
-        setTimeout(() => toast.remove(), 2500);
-    }
-
-    // ===== PERSISTENCE =====
-    function saveState() {
+    /* ========================
+       SAVE / LOAD
+       ======================== */
+    function save() {
         try {
-            const data = {
+            localStorage.setItem('mp_state', JSON.stringify({
                 videos: state.videos,
                 layout: state.layout,
-                fillMode: state.fillMode
-            };
-            localStorage.setItem('multiplayerState', JSON.stringify(data));
-        } catch (e) { /* ignore */ }
+                unmutedIndex: state.unmutedIndex
+            }));
+        } catch (e) {}
     }
 
-    function loadState() {
+    function load() {
         try {
-            const data = JSON.parse(localStorage.getItem('multiplayerState'));
-            if (data) {
-                state.videos = data.videos || [];
-                state.layout = data.layout || '2';
-                state.fillMode = data.fillMode !== undefined ? data.fillMode : true;
-                dom.fillToggle.checked = state.fillMode;
-            }
-        } catch (e) { /* ignore */ }
+            var raw = localStorage.getItem('mp_state');
+            if (!raw) return;
+            var d = JSON.parse(raw);
+            if (d.videos) state.videos = d.videos;
+            if (d.layout) state.layout = d.layout;
+            if (typeof d.unmutedIndex === 'number') state.unmutedIndex = d.unmutedIndex;
+            if (state.unmutedIndex >= state.videos.length) state.unmutedIndex = -1;
+        } catch (e) {}
     }
 
-    // ===== EVENT LISTENERS =====
-    function init() {
-        loadState();
-        renderVideos();
+    /* ========================
+       WIRE EVENTS
+       ======================== */
+    function wire() {
 
-        // Add button
-        dom.addBtn.addEventListener('click', (e) => {
+        // ADD BUTTON
+        dom.addBtn.addEventListener('click', function (e) {
+            e.preventDefault();
             e.stopPropagation();
-            openAddModal();
+            openModal('addModal');
+            dom.urlInput.value = '';
+            setTimeout(function () { dom.urlInput.focus(); }, 200);
         });
 
-        // Layout button
-        dom.layoutBtn.addEventListener('click', (e) => {
+        // LAYOUT BUTTON
+        dom.layoutBtn.addEventListener('click', function (e) {
+            e.preventDefault();
             e.stopPropagation();
-            openLayoutModal();
+            openModal('layoutModal');
+            refreshLayOpts();
         });
 
-        // Close modals
-        dom.closeModal.addEventListener('click', closeAddModal);
-        dom.closeLayoutModal.addEventListener('click', closeLayoutModal);
+        // CLOSE ADD MODAL
+        dom.closeAddModal.addEventListener('click', function (e) {
+            e.preventDefault();
+            closeModal('addModal');
+        });
+        dom.addModal.querySelector('.modal-bg').addEventListener('click', function () {
+            closeModal('addModal');
+        });
 
-        // Modal overlays
-        dom.addModal.querySelector('.modal-overlay').addEventListener('click', closeAddModal);
-        dom.layoutModal.querySelector('.modal-overlay').addEventListener('click', closeLayoutModal);
+        // CLOSE LAYOUT MODAL
+        dom.closeLayoutModal.addEventListener('click', function (e) {
+            e.preventDefault();
+            closeModal('layoutModal');
+        });
+        dom.layoutModal.querySelector('.modal-bg').addEventListener('click', function () {
+            closeModal('layoutModal');
+        });
 
-        // Paste button
-        dom.pasteBtn.addEventListener('click', async () => {
-            try {
-                const text = await navigator.clipboard.readText();
-                dom.urlInput.value = text;
-            } catch {
-                showToast('Could not access clipboard', true);
+        // PASTE
+        dom.pasteBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(function (t) {
+                    dom.urlInput.value = t;
+                }).catch(function () {
+                    toast('Clipboard denied', true);
+                });
             }
         });
 
-        // Add video
-        dom.addVideoBtn.addEventListener('click', () => {
-            const url = dom.urlInput.value.trim();
-            if (!url) {
-                showToast('Please enter a URL', true);
-                return;
-            }
+        // SUBMIT VIDEO
+        dom.submitVideo.addEventListener('click', function (e) {
+            e.preventDefault();
+            var url = dom.urlInput.value.trim();
+            if (!url) { toast('Enter a URL', true); return; }
             if (addVideo(url)) {
-                closeAddModal();
-                // Show first-time tap hint
-                if (state.videos.length === 1) {
-                    dom.tapHint.classList.remove('hidden');
-                    setTimeout(() => dom.tapHint.classList.add('hidden'), 3500);
-                }
-                // Auto-hide top bar after adding
-                setTimeout(() => {
-                    if (state.videos.length > 0 && state.activeVideoIndex === -1) {
+                closeModal('addModal');
+                setTimeout(function () {
+                    if (state.videos.length > 0 && state.activeIndex === -1) {
                         dom.topBar.classList.add('hidden');
                         state.uiVisible = false;
                     }
@@ -660,147 +481,201 @@
             }
         });
 
-        // Enter key on input
-        dom.urlInput.addEventListener('keydown', (e) => {
+        // ENTER KEY
+        dom.urlInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
-                dom.addVideoBtn.click();
+                e.preventDefault();
+                dom.submitVideo.click();
             }
         });
 
-        // Layout options
-        $$('.layout-option').forEach(opt => {
-            opt.addEventListener('click', () => {
-                state.layout = opt.dataset.layout;
-                updateLayoutSelection();
-                renderVideos();
-                saveState();
-                closeLayoutModal();
+        // LAYOUT OPTIONS
+        var layOpts = document.querySelectorAll('.lay-opt');
+        for (var i = 0; i < layOpts.length; i++) {
+            layOpts[i].addEventListener('click', function (e) {
+                e.preventDefault();
+                var el = this;
+                state.layout = el.getAttribute('data-layout');
+                refreshLayOpts();
+                render();
+                save();
+                closeModal('layoutModal');
             });
-        });
+        }
 
-        // Fill mode toggle
-        dom.fillToggle.addEventListener('change', () => {
-            state.fillMode = dom.fillToggle.checked;
-            renderVideos();
-            saveState();
-        });
-
-        // Video tap zones (delegated)
-        dom.videoGrid.addEventListener('click', (e) => {
-            const tapZone = e.target.closest('.video-tap-zone');
-            if (tapZone) {
-                e.stopPropagation();
-                const index = parseInt(tapZone.dataset.index);
-
-                if (state.activeVideoIndex === index) {
-                    hideControls();
-                } else {
-                    showControls(index);
+        // TAP ZONE (delegated on grid)
+        dom.videoGrid.addEventListener('click', function (e) {
+            var target = e.target;
+            // Walk up to find tap-zone
+            var zone = null;
+            var el = target;
+            while (el && el !== dom.videoGrid) {
+                if (el.classList && el.classList.contains('tap-zone')) {
+                    zone = el;
+                    break;
                 }
-                return;
+                el = el.parentElement;
+            }
+            if (!zone) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            var idx = parseInt(zone.getAttribute('data-idx'), 10);
+            if (state.activeIndex === idx) {
+                hideUI();
+            } else {
+                showUI(idx);
             }
         });
 
-        // Control actions
-        dom.controlsOverlay.addEventListener('click', (e) => {
-            const btn = e.target.closest('.ctrl-btn');
+        // CONTROL BUTTONS (delegated)
+        dom.controlsBar.addEventListener('click', function (e) {
+            var target = e.target;
+            var btn = null;
+            var el = target;
+            while (el && el !== dom.controlsBar) {
+                if (el.classList && el.classList.contains('ctrl-btn')) {
+                    btn = el;
+                    break;
+                }
+                el = el.parentElement;
+            }
             if (!btn) return;
 
+            e.preventDefault();
             e.stopPropagation();
-            const action = btn.dataset.action;
-            const idx = state.activeVideoIndex;
 
+            var action = btn.getAttribute('data-action');
+            var idx = state.activeIndex;
             if (idx < 0) return;
 
-            resetHideTimer();
+            resetTimer();
 
             switch (action) {
-                case 'mute':
-                    toggleMute(idx);
+                case 'unmute':
+                    toggleUnmute(idx);
                     break;
-                case 'move-up':
+                case 'move-left':
                     if (idx > 0) moveVideo(idx, idx - 1);
                     break;
-                case 'move-down':
+                case 'move-right':
                     if (idx < state.videos.length - 1) moveVideo(idx, idx + 1);
                     break;
                 case 'reload':
-                    reloadVideo(idx);
-                    showToast('Reloading...');
+                    reloadCell(idx, state.unmutedIndex !== idx);
+                    toast('Reloading...');
                     break;
                 case 'remove':
                     removeVideo(idx);
-                    showToast('Video removed');
+                    toast('Removed');
                     break;
             }
         });
 
-        // Tap outside to hide UI
-        document.addEventListener('click', (e) => {
+        // CLICK ANYWHERE ELSE
+        document.addEventListener('click', function (e) {
             if (state.videos.length === 0) return;
 
-            if (!e.target.closest('.modal') &&
-                !e.target.closest('.top-bar') &&
-                !e.target.closest('.controls-overlay') &&
-                !e.target.closest('.video-tap-zone') &&
-                !e.target.closest('.drag-handle')) {
-                if (state.activeVideoIndex >= 0) {
-                    hideControls();
+            var el = e.target;
+            while (el) {
+                if (el.id === 'addModal' || el.id === 'layoutModal') return;
+                if (el.id === 'topBar') return;
+                if (el.id === 'controlsBar') return;
+                if (el.classList && el.classList.contains('tap-zone')) return;
+                el = el.parentElement;
+            }
+
+            if (state.activeIndex >= 0) {
+                hideUI();
+            } else {
+                toggleTopBar();
+            }
+        });
+
+        // KEYBOARD
+        document.addEventListener('keydown', function (e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            if (e.key === 'Escape') {
+                if (!dom.addModal.classList.contains('hidden')) { closeModal('addModal'); return; }
+                if (!dom.layoutModal.classList.contains('hidden')) { closeModal('layoutModal'); return; }
+                hideUI();
+                return;
+            }
+            if (e.key === 'a' || e.key === 'A') {
+                e.preventDefault();
+                dom.addBtn.click();
+            }
+            if (e.key === 'l' || e.key === 'L') {
+                e.preventDefault();
+                dom.layoutBtn.click();
+            }
+        });
+
+        // RESIZE
+        window.addEventListener('resize', function () {
+            if (state.videos.length > 0) {
+                // just fix rows
+                var layout = state.layout;
+                var count = state.videos.length;
+                var cols;
+                switch (layout) {
+                    case '1': cols = 1; break;
+                    case '2': cols = 2; break;
+                    case '3': cols = 3; break;
+                    case 'pip': cols = 1; break;
+                    case '2x1': cols = 2; break;
+                    case 'auto': cols = count <= 1 ? 1 : count <= 4 ? 2 : 3; break;
+                    default: cols = 2;
+                }
+                if (layout === 'pip') {
+                    dom.videoGrid.style.gridTemplateRows = '1fr';
+                } else if (layout === '2x1') {
+                    var extra = Math.ceil(Math.max(0, count - 1) / 2);
+                    dom.videoGrid.style.gridTemplateRows = 'repeat(' + (1 + extra) + ', 1fr)';
                 } else {
-                    toggleUI();
+                    var rows = Math.max(1, Math.ceil(count / cols));
+                    dom.videoGrid.style.gridTemplateRows = 'repeat(' + rows + ', 1fr)';
                 }
             }
         });
+    }
 
-        // Prevent iOS bounce
-        document.body.addEventListener('touchmove', (e) => {
-            if (e.target.closest('.modal-content')) return;
-            if (!touchDragData.active) return;
-            e.preventDefault();
-        }, { passive: false });
-
-        // Handle orientation change
-        window.addEventListener('orientationchange', () => {
-            setTimeout(() => {
-                renderVideos();
-            }, 300);
-        });
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (e.target.tagName === 'INPUT') return;
-
-            switch (e.key) {
-                case 'a':
-                case 'A':
-                    openAddModal();
-                    break;
-                case 'Escape':
-                    if (!dom.addModal.classList.contains('hidden')) closeAddModal();
-                    else if (!dom.layoutModal.classList.contains('hidden')) closeLayoutModal();
-                    else hideControls();
-                    break;
-                case 'l':
-                case 'L':
-                    openLayoutModal();
-                    break;
+    function refreshLayOpts() {
+        var opts = document.querySelectorAll('.lay-opt');
+        for (var i = 0; i < opts.length; i++) {
+            var l = opts[i].getAttribute('data-layout');
+            if (l === state.layout) {
+                opts[i].classList.add('active');
+            } else {
+                opts[i].classList.remove('active');
             }
-        });
+        }
+    }
 
-        // Show UI initially if no videos
+    /* ========================
+       BOOT
+       ======================== */
+    function boot() {
+        initDom();
+        load();
+        render();
+        wire();
+
+        // Initial visibility
         if (state.videos.length === 0) {
             dom.topBar.classList.remove('hidden');
-            state.uiVisible = true;
         } else {
             dom.topBar.classList.add('hidden');
             state.uiVisible = false;
         }
     }
 
-    // Start
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', boot);
     } else {
-        init();
+        boot();
     }
+
 })();
