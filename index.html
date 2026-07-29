@@ -1,147 +1,100 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#000000">
-    <title>MultiPlayer</title>
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mobile Multiplayer (POC)</title>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <!-- Pure video grid -->
+  <main id="grid" aria-label="Video grid"></main>
 
-    <button id="fab" class="fab" type="button">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+  <!-- Corner settings button -->
+  <button id="fab" class="fab" aria-label="Open settings">
+    <!-- gear -->
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path fill="currentColor" d="M19.14,12.94c0.04-0.31,0.06-0.63,0.06-0.94s-0.02-0.63-0.06-0.94l2.03-1.58
+      c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.11-0.2-0.36-0.28-0.57-0.2l-2.39,0.96c-0.5-0.38-1.04-0.69-1.64-0.92
+      L14.4,2.81C14.37,2.59,14.18,2.43,13.95,2.43h-3.9c-0.23,0-0.42,0.16-0.45,0.38L9.23,5.39
+      C8.63,5.62,8.09,5.93,7.59,6.31L5.2,5.35c-0.21-0.08-0.46,0-0.57,0.2L2.71,8.87C2.6,9.07,2.65,9.34,2.83,9.48
+      l2.03,1.58C4.82,11.37,4.8,11.69,4.8,12s0.02,0.63,0.06,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32
+      c0.11,0.2,0.36,0.28,0.57,0.2l2.39-0.96c0.5,0.38,1.04,0.69,1.64,0.92l0.37,2.58c0.03,0.22,0.22,0.38,0.45,0.38h3.9
+      c0.23,0,0.42-0.16,0.45-0.38l0.37-2.58c0.6-0.23,1.14-0.54,1.64-0.92l2.39,0.96c0.21,0.08,0.46,0,0.57-0.2l1.92-3.32
+      c0.11-0.2,0.06-0.47-0.12-0.61L19.14,12.94z M12,15.3c-1.82,0-3.3-1.48-3.3-3.3s1.48-3.3,3.3-3.3s3.3,1.48,3.3,3.3
+      S13.82,15.3,12,15.3z"/>
+    </svg>
+  </button>
+
+  <!-- Settings bottom sheet -->
+  <section id="sheet" class="sheet" aria-label="Settings">
+    <div id="sheetHandle" class="sheet__handle" aria-hidden="true"></div>
+
+    <div class="sheet__card">
+      <div class="sheet__row sheet__row--top">
+        <button id="enterEditBtn" class="icon" aria-label="Enter edit mode">
+          <!-- pencil -->
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm2.92 2.33H5v-.92l8.06-8.06.92.92L5.92 19.58zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+          </svg>
+        </button>
+
+        <button id="closeSheetBtn" class="icon" aria-label="Close settings">
+          <!-- chevron down -->
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M7.41 8.59a1 1 0 0 1 1.41 0L12 11.76l3.18-3.17a1 1 0 1 1 1.41 1.41l-3.88 3.88a1 1 0 0 1-1.41 0L7.41 10a1 1 0 0 1 0-1.41z"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="sheet__row">
+        <div class="segmented" role="group" aria-label="Videos per row">
+          <button class="segmented__btn" data-cols="1" aria-label="1 per row">1</button>
+          <button class="segmented__btn" data-cols="2" aria-label="2 per row">2</button>
+          <button class="segmented__btn" data-cols="3" aria-label="3 per row">3</button>
+        </div>
+      </div>
+
+      <div class="sheet__row">
+        <input id="urlInput" class="input" placeholder="Paste stream URL…" autocomplete="off" />
+        <button id="addBtn" class="icon icon--primary" aria-label="Add stream">
+          <!-- plus -->
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M19 11h-6V5a1 1 0 0 0-2 0v6H5a1 1 0 0 0 0 2h6v6a1 1 0 0 0 2 0v-6h6a1 1 0 0 0 0-2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Edit dock (only shows in edit mode) -->
+  <nav id="dock" class="dock" aria-label="Edit actions">
+    <button id="volumeBtn" class="dock__btn" aria-label="Toggle audio for selected" disabled>
+      <span id="volumeIcon" aria-hidden="true"></span>
     </button>
 
-    <div id="menuPanel" class="menu-panel hidden">
-        <button class="menu-item" data-action="add" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-            <span>Add Video</span>
-        </button>
-        <button class="menu-item" data-action="layout" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg>
-            <span>Layout</span>
-        </button>
-        <button class="menu-item" data-action="select" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-            <span>Select / Edit</span>
-        </button>
-        <button class="menu-item" data-action="clearall" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-            <span>Clear All</span>
-        </button>
-    </div>
-    <div id="menuOverlay" class="menu-overlay hidden"></div>
+    <button id="moveBtn" class="dock__btn" aria-label="Toggle move/reorder mode" disabled>
+      <!-- move -->
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path fill="currentColor" d="M12 2l3 3h-2v4h4V7l3 3-3 3v-2h-4v4h2l-3 3-3-3h2v-4H7v2l-3-3 3-3v2h4V5H9l3-3z"/>
+      </svg>
+    </button>
 
-    <div id="videoGrid" class="video-grid"></div>
+    <button id="trashBtn" class="dock__btn dock__btn--danger" aria-label="Remove selected" disabled>
+      <!-- trash -->
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path fill="currentColor" d="M9 3a1 1 0 0 0-1 1v1H5a1 1 0 0 0 0 2h1v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h1a1 1 0 0 0 0-2h-3V4a1 1 0 0 0-1-1H9zm1 2h4v0H10v0zm-1 4a1 1 0 0 1 1 1v9a1 1 0 0 1-2 0v-9a1 1 0 0 1 1-1zm6 0a1 1 0 0 1 1 1v9a1 1 0 0 1-2 0v-9a1 1 0 0 1 1-1z"/>
+      </svg>
+    </button>
 
-    <div id="emptyState" class="empty-state">
-        <div class="empty-icon">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
-        </div>
-        <p>Tap the menu to add videos</p>
-        <p class="sub">YouTube &bull; Twitch &bull; Rumble &bull; Kick</p>
-    </div>
+    <button id="doneBtn" class="dock__btn dock__btn--primary" aria-label="Done">
+      <!-- check -->
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path fill="currentColor" d="M9 16.17 4.83 12a1 1 0 0 0-1.41 1.41l4.88 4.88a1 1 0 0 0 1.41 0l10-10a1 1 0 1 0-1.41-1.41L9 16.17z"/>
+      </svg>
+    </button>
+  </nav>
 
-    <div id="selectBar" class="select-bar hidden">
-        <div class="select-bar-inner">
-            <span id="selectLabel">Tap a video to select</span>
-            <button id="exitSelect" class="select-exit" type="button">Done</button>
-        </div>
-    </div>
-
-    <div id="actionBar" class="action-bar hidden">
-        <button class="act-btn" data-action="volume" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
-            <span>Unmute</span>
-        </button>
-        <button class="act-btn" data-action="move-left" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-            <span>Left</span>
-        </button>
-        <button class="act-btn" data-action="move-right" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
-            <span>Right</span>
-        </button>
-        <button class="act-btn" data-action="reload" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-            <span>Reload</span>
-        </button>
-        <button class="act-btn danger" data-action="remove" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-            <span>Remove</span>
-        </button>
-        <button class="act-btn" data-action="deselect" type="button">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-            <span>Done</span>
-        </button>
-    </div>
-
-    <div id="addModal" class="modal-wrap hidden">
-        <div class="modal-bg"></div>
-        <div class="modal-sheet">
-            <div class="modal-handle"></div>
-            <div class="modal-top">
-                <h2>Add Video</h2>
-                <button class="modal-close" id="closeAddModal" type="button">&times;</button>
-            </div>
-            <div class="modal-inner">
-                <div class="input-row">
-                    <input type="text" id="urlInput" placeholder="Paste video or stream URL..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-                    <button id="pasteBtn" class="paste-btn" type="button">Paste</button>
-                </div>
-                <div class="chips">
-                    <span class="chip yt">YouTube</span>
-                    <span class="chip tw">Twitch</span>
-                    <span class="chip ru">Rumble</span>
-                    <span class="chip ki">Kick</span>
-                </div>
-                <div class="examples">
-                    <p>Supported formats:</p>
-                    <code>youtube.com/watch?v=ID</code>
-                    <code>youtu.be/ID</code>
-                    <code>youtube.com/live/ID</code>
-                    <code>twitch.tv/channel</code>
-                    <code>rumble.com/embed/ID</code>
-                    <code>kick.com/channel</code>
-                </div>
-                <button id="submitVideo" class="submit-btn" type="button">Add Video</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="layoutModal" class="modal-wrap hidden">
-        <div class="modal-bg"></div>
-        <div class="modal-sheet">
-            <div class="modal-handle"></div>
-            <div class="modal-top">
-                <h2>Layout</h2>
-                <button class="modal-close" id="closeLayoutModal" type="button">&times;</button>
-            </div>
-            <div class="modal-inner">
-                <div class="layout-grid" id="layoutGrid"></div>
-            </div>
-        </div>
-    </div>
-
-    <div id="confirmModal" class="modal-wrap hidden">
-        <div class="modal-bg"></div>
-        <div class="modal-sheet modal-sm">
-            <div class="modal-handle"></div>
-            <div class="modal-inner" style="padding-top:20px">
-                <p id="confirmText" class="confirm-text"></p>
-                <div class="confirm-btns">
-                    <button id="confirmNo" class="conf-btn cancel" type="button">Cancel</button>
-                    <button id="confirmYes" class="conf-btn yes" type="button">Confirm</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="toastBox"></div>
-    <script src="script.js"></script>
+  <script src="./script.js"></script>
 </body>
 </html>
