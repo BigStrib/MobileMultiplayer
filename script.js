@@ -1,947 +1,669 @@
-(function(){
-'use strict';
+/* ===== STATE MANAGEMENT ===== */
+const AppState = {
+    streams: [],
+    muted: {},
+    selectedTab: 'add',
+    isSheetOpen: false,
+    draggedIndex: null,
 
-var LAYOUTS = [
-    {id:'1x1',name:'Single',cols:1,rows:1,cells:[[0,0,1,1]]},
-    {id:'1x2',name:'Stack 2',cols:1,rows:2,cells:[[0,0,1,1],[0,1,1,1]]},
-    {id:'2x1',name:'Side by Side',cols:2,rows:1,cells:[[0,0,1,1],[1,0,1,1]]},
-    {id:'2x2',name:'2x2 Grid',cols:2,rows:2,cells:[[0,0,1,1],[1,0,1,1],[0,1,1,1],[1,1,1,1]]},
-    {id:'1t2b',name:'1 Top + 2',cols:2,rows:2,cells:[[0,0,2,1],[0,1,1,1],[1,1,1,1]]},
-    {id:'2t1b',name:'2 Top + 1',cols:2,rows:2,cells:[[0,0,1,1],[1,0,1,1],[0,1,2,1]]},
-    {id:'3x1',name:'3 Row',cols:3,rows:1,cells:[[0,0,1,1],[1,0,1,1],[2,0,1,1]]},
-    {id:'1x3',name:'3 Stack',cols:1,rows:3,cells:[[0,0,1,1],[0,1,1,1],[0,2,1,1]]},
-    {id:'2x3',name:'2x3 Grid',cols:2,rows:3,cells:[[0,0,1,1],[1,0,1,1],[0,1,1,1],[1,1,1,1],[0,2,1,1],[1,2,1,1]]},
-    {id:'3x2',name:'3x2 Grid',cols:3,rows:2,cells:[[0,0,1,1],[1,0,1,1],[2,0,1,1],[0,1,1,1],[1,1,1,1],[2,1,1,1]]},
-    {id:'1L2R',name:'1 Left + 2',cols:2,rows:2,cells:[[0,0,1,2],[1,0,1,1],[1,1,1,1]]},
-    {id:'2L1R',name:'2 Left + 1',cols:2,rows:2,cells:[[0,0,1,1],[0,1,1,1],[1,0,1,2]]}
-];
+    init() {
+        this.loadStreams();
+        this.loadMutedStates();
+    },
 
-var state = {
-    videos: [],
-    layoutId: '2x2',
-    activeIndex: -1,
-    selectMode: false,
-    menuOpen: false,
-    unmutedIndex: -1,
-    keepAlive: {},
-    confirmCb: null,
-    fabTimer: null
+    loadStreams() {
+        const saved = localStorage.getItem('streamsync_streams');
+        this.streams = saved ? JSON.parse(saved) : [];
+    },
+
+    loadMutedStates() {
+        const saved = localStorage.getItem('streamsync_muted');
+        this.muted = saved ? JSON.parse(saved) : {};
+    },
+
+    saveStreams() {
+        localStorage.setItem('streamsync_streams', JSON.stringify(this.streams));
+    },
+
+    saveMutedStates() {
+        localStorage.setItem('streamsync_muted', JSON.stringify(this.muted));
+    },
+
+    addStream(stream) {
+        if (this.streams.length >= 4) {
+            throw new Error('Maximum 4 streams allowed');
+        }
+        this.streams.push(stream);
+        this.muted[this.streams.length - 1] = false;
+        this.saveStreams();
+        this.saveMutedStates();
+    },
+
+    removeStream(index) {
+        this.streams.splice(index, 1);
+        delete this.muted[index];
+        
+        const newMuted = {};
+        Object.entries(this.muted).forEach(([key, value]) => {
+            const idx = parseInt(key);
+            if (idx > index) {
+                newMuted[idx - 1] = value;
+            } else if (idx < index) {
+                newMuted[idx] = value;
+            }
+        });
+        this.muted = newMuted;
+        
+        this.saveStreams();
+        this.saveMutedStates();
+    },
+
+    moveStream(fromIndex, toIndex) {
+        if (toIndex < 0 || toIndex >= this.streams.length) return;
+
+        [this.streams[fromIndex], this.streams[toIndex]] = 
+        [this.streams[toIndex], this.streams[fromIndex]];
+
+        [this.muted[fromIndex], this.muted[toIndex]] = 
+        [this.muted[toIndex], this.muted[fromIndex]];
+
+        this.saveStreams();
+        this.saveMutedStates();
+    },
+
+    toggleMute(index) {
+        this.muted[index] = !this.muted[index];
+        this.saveMutedStates();
+    },
+
+    clearAll() {
+        this.streams = [];
+        this.muted = {};
+        this.saveStreams();
+        this.saveMutedStates();
+    },
 };
 
-var dom = {};
+/* ===== DOM ELEMENTS ===== */
+const DOM = {
+    viewport: document.getElementById('viewport'),
+    gridContainer: document.getElementById('gridContainer'),
+    fab: document.getElementById('fab'),
+    bottomSheet: document.getElementById('bottomSheet'),
+    sheetOverlay: document.getElementById('sheetOverlay'),
+    sheetHandle: document.querySelector('.sheet-handle'),
+    sheetTabs: document.querySelectorAll('.sheet-tab'),
+    tabContents: document.querySelectorAll('.sheet-tab-content'),
+    streamUrlInput: document.getElementById('streamUrlInput'),
+    inputClearBtn: document.getElementById('inputClearBtn'),
+    addStreamBtn: document.getElementById('addStreamBtn'),
+    streamsContainer: document.getElementById('streamsContainer'),
+    clearAllBtn: document.getElementById('clearAllBtn'),
+    streamCount: document.getElementById('streamCount'),
+    toastContainer: document.getElementById('toastContainer'),
+};
 
-function grab(id) {
-    return document.getElementById(id);
-}
+/* ===== PLATFORM DETECTION ===== */
+const PlatformDetector = {
+    detect(url) {
+        url = url.trim();
 
-function initDom() {
-    dom.fab = grab('fab');
-    dom.menuPanel = grab('menuPanel');
-    dom.menuOverlay = grab('menuOverlay');
-    dom.videoGrid = grab('videoGrid');
-    dom.emptyState = grab('emptyState');
-    dom.addModal = grab('addModal');
-    dom.layoutModal = grab('layoutModal');
-    dom.confirmModal = grab('confirmModal');
-    dom.confirmText = grab('confirmText');
-    dom.confirmYes = grab('confirmYes');
-    dom.confirmNo = grab('confirmNo');
-    dom.selectBar = grab('selectBar');
-    dom.selectLabel = grab('selectLabel');
-    dom.exitSelect = grab('exitSelect');
-    dom.actionBar = grab('actionBar');
-    dom.urlInput = grab('urlInput');
-    dom.submitVideo = grab('submitVideo');
-    dom.closeAddModal = grab('closeAddModal');
-    dom.closeLayoutModal = grab('closeLayoutModal');
-    dom.pasteBtn = grab('pasteBtn');
-    dom.toastBox = grab('toastBox');
-    dom.layoutGrid = grab('layoutGrid');
-}
+        if (this.isYoutube(url)) {
+            return this.parseYoutube(url);
+        }
+        if (this.isTwitch(url)) {
+            return this.parseTwitch(url);
+        }
+        if (this.isKick(url)) {
+            return this.parseKick(url);
+        }
+        if (this.isRumble(url)) {
+            return this.parseRumble(url);
+        }
 
-function getLayout() {
-    for (var i = 0; i < LAYOUTS.length; i++) {
-        if (LAYOUTS[i].id === state.layoutId) return LAYOUTS[i];
-    }
-    return LAYOUTS[3];
-}
+        throw new Error('Unsupported platform. Try YouTube, Twitch, Kick, or Rumble.');
+    },
 
-// ===== FAB =====
-function flashFab() {
-    dom.fab.classList.add('show');
-    clearTimeout(state.fabTimer);
-    state.fabTimer = setTimeout(function() {
-        if (!state.menuOpen) dom.fab.classList.remove('show');
-    }, 3000);
-}
+    isYoutube(url) {
+        return /youtube\.com|youtu\.be/.test(url);
+    },
 
-// ===== IFRAME SIZING =====
-function sizeIframes() {
-    var cells = dom.videoGrid.querySelectorAll('.video-cell');
-    for (var i = 0; i < cells.length; i++) {
-        var cell = cells[i];
-        var iframe = cell.querySelector('iframe');
-        if (!iframe) continue;
-        var cw = cell.offsetWidth;
-        var ch = cell.offsetHeight;
-        if (!cw || !ch) continue;
-        var cellAR = cw / ch;
-        var vidAR = 16 / 9;
-        if (cellAR > vidAR) {
-            iframe.style.width = '100%';
-            iframe.style.height = (cw / vidAR) + 'px';
+    isTwitch(url) {
+        return /twitch\.tv/.test(url);
+    },
+
+    isKick(url) {
+        return /kick\.com/.test(url);
+    },
+
+    isRumble(url) {
+        return /rumble\.com/.test(url);
+    },
+
+    parseYoutube(url) {
+        const videoMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s?]+)/);
+        if (videoMatch) {
+            const videoId = videoMatch[1];
+            return {
+                platform: 'youtube',
+                name: 'YouTube',
+                videoId: videoId,
+                embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&modestbranding=1&playsinline=1&rel=0`,
+                originalUrl: url,
+            };
+        }
+
+        const channelMatch = url.match(/youtube\.com\/@([^/?]+)|youtube\.com\/channel\/([^/?]+)/);
+        if (channelMatch) {
+            const channelId = channelMatch[1] || channelMatch[2];
+            return {
+                platform: 'youtube',
+                name: `YouTube - ${channelId}`,
+                channelId: channelId,
+                embedUrl: `https://www.youtube.com/embed/live_stream?channel=${channelId}&autoplay=1`,
+                originalUrl: url,
+            };
+        }
+
+        throw new Error('Invalid YouTube URL');
+    },
+
+    parseTwitch(url) {
+        const channelMatch = url.match(/twitch\.tv\/([^/?]+)/);
+        if (!channelMatch) {
+            throw new Error('Invalid Twitch URL');
+        }
+
+        const channelName = channelMatch[1].toLowerCase();
+        return {
+            platform: 'twitch',
+            name: `Twitch - ${channelName}`,
+            channelName: channelName,
+            embedUrl: `https://player.twitch.tv/?channel=${channelName}&parent=${window.location.hostname}&autoplay=true`,
+            originalUrl: url,
+        };
+    },
+
+    parseKick(url) {
+        const channelMatch = url.match(/kick\.com\/([^/?]+)/);
+        if (!channelMatch) {
+            throw new Error('Invalid Kick URL');
+        }
+
+        const channelName = channelMatch[1].toLowerCase();
+        return {
+            platform: 'kick',
+            name: `Kick - ${channelName}`,
+            channelName: channelName,
+            embedUrl: `https://player.kick.com/?channel=${channelName}`,
+            originalUrl: url,
+        };
+    },
+
+    parseRumble(url) {
+        const videoMatch = url.match(/rumble\.com\/embed\/([^/?]+)|rumble\.com\/([^/?]+)/);
+        if (!videoMatch) {
+            throw new Error('Invalid Rumble URL');
+        }
+
+        const videoId = videoMatch[1] || videoMatch[2];
+        return {
+            platform: 'rumble',
+            name: `Rumble - ${videoId}`,
+            videoId: videoId,
+            embedUrl: `https://rumble.com/embed/${videoId}/?pub=4`,
+            originalUrl: url,
+        };
+    },
+};
+
+/* ===== UI RENDERER ===== */
+const UIRenderer = {
+    renderGrid() {
+        DOM.gridContainer.innerHTML = '';
+
+        for (let i = 0; i < 4; i++) {
+            const tile = this.createStreamTile(i);
+            DOM.gridContainer.appendChild(tile);
+        }
+    },
+
+    createStreamTile(index) {
+        const tile = document.createElement('div');
+        tile.className = 'stream-tile';
+        tile.dataset.index = index;
+
+        if (AppState.streams[index]) {
+            const stream = AppState.streams[index];
+            const isMuted = AppState.muted[index];
+
+            const iframe = document.createElement('iframe');
+            iframe.className = 'stream-iframe';
+            iframe.src = stream.embedUrl;
+            iframe.allow = 'autoplay; encrypted-media; fullscreen';
+            iframe.title = stream.name;
+            iframe.loading = 'lazy';
+
+            tile.appendChild(iframe);
+            tile.classList.add('active');
+
+            if (isMuted) {
+                const overlay = document.createElement('div');
+                overlay.className = 'muted-overlay';
+                overlay.innerHTML = `
+                    <div class="muted-badge">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                            <line x1="23" y1="9" x2="17" y2="15"/>
+                            <line x1="17" y1="9" x2="23" y2="15"/>
+                        </svg>
+                        <span>Muted</span>
+                    </div>
+                `;
+                tile.appendChild(overlay);
+            }
+
+            this.addTileDragListeners(tile, index);
         } else {
-            iframe.style.height = '100%';
-            iframe.style.width = (ch * vidAR) + 'px';
+            const emptyState = document.createElement('div');
+            emptyState.className = 'empty-state';
+            emptyState.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+                    <line x1="7" y1="2" x2="7" y2="22"/>
+                    <line x1="17" y1="2" x2="17" y2="22"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <line x1="2" y1="7" x2="22" y2="7"/>
+                    <line x1="2" y1="17" x2="22" y2="17"/>
+                </svg>
+                <div class="empty-state-text">Empty Slot</div>
+            `;
+            tile.appendChild(emptyState);
+            tile.classList.add('empty');
         }
-    }
-}
 
-// ===== APPLY GRID =====
-function applyGrid() {
-    var layout = getLayout();
-    var count = state.videos.length;
-    if (count === 0) return;
+        return tile;
+    },
 
-    var grid = dom.videoGrid;
-    grid.style.gridTemplateColumns = 'repeat(' + layout.cols + ',1fr)';
-    grid.style.gridTemplateRows = 'repeat(' + layout.rows + ',1fr)';
+    addTileDragListeners(tile, index) {
+        let startX, startY, currentX, currentY;
 
-    var cells = grid.querySelectorAll('.video-cell');
-    for (var i = 0; i < cells.length; i++) {
-        if (i < layout.cells.length) {
-            var c = layout.cells[i];
-            cells[i].style.gridColumn = (c[0] + 1) + ' / span ' + c[2];
-            cells[i].style.gridRow = (c[1] + 1) + ' / span ' + c[3];
-            cells[i].style.display = '';
+        const handleTouchStart = (e) => {
+            if (AppState.isSheetOpen) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            currentX = startX;
+            currentY = startY;
+            AppState.draggedIndex = index;
+            tile.classList.add('dragging');
+        };
+
+        const handleTouchMove = (e) => {
+            if (AppState.draggedIndex === null) return;
+            currentX = e.touches[0].clientX;
+            currentY = e.touches[0].clientY;
+        };
+
+        const handleTouchEnd = (e) => {
+            if (AppState.draggedIndex === null) return;
+
+            const deltaX = currentX - startX;
+            const deltaY = currentY - startY;
+            const threshold = 40;
+
+            if (Math.abs(deltaX) > threshold || Math.abs(deltaY) > threshold) {
+                this.handleTileDragSwap(index, deltaX, deltaY);
+            }
+
+            tile.classList.remove('dragging');
+            AppState.draggedIndex = null;
+        };
+
+        tile.addEventListener('touchstart', handleTouchStart, false);
+        document.addEventListener('touchmove', handleTouchMove, false);
+        document.addEventListener('touchend', handleTouchEnd, false);
+    },
+
+    handleTileDragSwap(index, deltaX, deltaY) {
+        const absX = Math.abs(deltaX);
+        const absY = Math.abs(deltaY);
+
+        if (absX > absY) {
+            if (deltaX > 0 && index % 2 === 1) {
+                AppState.moveStream(index, index - 1);
+            } else if (deltaX < 0 && index % 2 === 0 && index < 3) {
+                AppState.moveStream(index, index + 1);
+            }
         } else {
-            cells[i].style.gridColumn = '';
-            cells[i].style.gridRow = '';
-            cells[i].style.display = '';
+            if (deltaY > 0 && index > 1) {
+                AppState.moveStream(index, index - 2);
+            } else if (deltaY < 0 && index < 2) {
+                AppState.moveStream(index, index + 2);
+            }
         }
-    }
 
-    requestAnimationFrame(sizeIframes);
-}
+        this.renderGrid();
+        this.renderStreamsList();
+        Toast.show(`Stream moved`, 'info');
+    },
 
-// ===== URL PARSING =====
-function parseURL(input) {
-    input = input.trim();
-    var url = input;
-    if (url.indexOf('://') === -1 && url.indexOf('.') !== -1) url = 'https://' + url;
-    var m;
+    renderStreamsList() {
+        DOM.streamsContainer.innerHTML = '';
+        DOM.clearAllBtn.style.display = AppState.streams.length > 0 ? 'flex' : 'none';
+        DOM.streamCount.textContent = `${AppState.streams.length}/4`;
 
-    m = url.match(/(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/|youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/);
-    if (m) return {platform: 'youtube', id: m[1], type: 'video', isLive: url.indexOf('/live/') !== -1};
+        AppState.streams.forEach((stream, index) => {
+            const item = this.createStreamItem(stream, index);
+            DOM.streamsContainer.appendChild(item);
+        });
 
-    m = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-    if (m) return {platform: 'youtube', id: m[1], type: 'video', isLive: false};
-
-    m = url.match(/youtube\.com\/@([^\/\?]+)/);
-    if (m) return {platform: 'youtube', id: m[1], type: 'channel', isLive: true};
-
-    m = url.match(/clips\.twitch\.tv\/([a-zA-Z0-9_-]+)/);
-    if (m) return {platform: 'twitch', id: m[1], type: 'clip'};
-
-    m = url.match(/twitch\.tv\/\w+\/clip\/([a-zA-Z0-9_-]+)/);
-    if (m) return {platform: 'twitch', id: m[1], type: 'clip'};
-
-    m = url.match(/twitch\.tv\/videos\/(\d+)/);
-    if (m) return {platform: 'twitch', id: m[1], type: 'vod'};
-
-    m = url.match(/twitch\.tv\/([a-zA-Z0-9_]+)\/?$/);
-    if (m && ['videos', 'clips', 'about', 'schedule'].indexOf(m[1]) === -1)
-        return {platform: 'twitch', id: m[1], type: 'channel'};
-
-    m = url.match(/rumble\.com\/embed\/([a-zA-Z0-9]+)/);
-    if (m) return {platform: 'rumble', id: m[1], type: 'embed'};
-
-    if (url.indexOf('rumble.com') !== -1) {
-        m = url.match(/rumble\.com\/([a-zA-Z0-9\-]+?)(?:\.html)?(?:\?|$)/);
-        if (m) return {platform: 'rumble', id: m[1], type: 'video'};
-    }
-
-    m = url.match(/kick\.com\/[^\/]+\?clip=([a-zA-Z0-9_-]+)/);
-    if (m) return {platform: 'kick', id: m[1], type: 'clip'};
-
-    m = url.match(/kick\.com\/video\/([a-zA-Z0-9_-]+)/);
-    if (m) return {platform: 'kick', id: m[1], type: 'vod'};
-
-    m = url.match(/kick\.com\/([a-zA-Z0-9_]+)\/?$/);
-    if (m) return {platform: 'kick', id: m[1], type: 'channel'};
-
-    if (/^[a-zA-Z0-9_-]{11}$/.test(input))
-        return {platform: 'youtube', id: input, type: 'video', isLive: false};
-
-    return null;
-}
-
-function buildEmbed(parsed, muted) {
-    var host = window.location.hostname || 'localhost';
-    var origin = window.location.origin || ('https://' + host);
-    var mi = muted ? 1 : 0;
-    var mb = muted ? 'true' : 'false';
-
-    switch (parsed.platform) {
-        case 'youtube':
-            var b = parsed.type === 'channel'
-                ? 'https://www.youtube.com/embed/live_stream?channel=' + parsed.id
-                : 'https://www.youtube.com/embed/' + parsed.id;
-            return b + '?autoplay=1&mute=' + mi + '&playsinline=1&rel=0&enablejsapi=1&origin=' + encodeURIComponent(origin) + '&widgetid=1';
-        case 'twitch':
-            if (parsed.type === 'clip') return 'https://clips.twitch.tv/embed?clip=' + parsed.id + '&parent=' + host + '&autoplay=true&muted=' + mb;
-            if (parsed.type === 'vod') return 'https://player.twitch.tv/?video=v' + parsed.id + '&parent=' + host + '&autoplay=true&muted=' + mb;
-            return 'https://player.twitch.tv/?channel=' + parsed.id + '&parent=' + host + '&autoplay=true&muted=' + mb;
-        case 'rumble':
-            return 'https://rumble.com/embed/' + parsed.id + '/?autoplay=1&mute=' + mi;
-        case 'kick':
-            if (parsed.type === 'clip') return 'https://player.kick.com/clip/' + parsed.id + '?autoplay=true&muted=' + mb;
-            return 'https://player.kick.com/' + parsed.id + '?autoplay=true&muted=' + mb;
-    }
-    return null;
-}
-
-// ===== YT COMMANDS =====
-function ytCmd(iframe, fn, args) {
-    try {
-        iframe.contentWindow.postMessage(JSON.stringify({event: 'command', func: fn, args: args || []}), '*');
-    } catch (e) {}
-}
-
-function ytListen(iframe) {
-    try {
-        iframe.contentWindow.postMessage(JSON.stringify({event: 'listening', id: 1}), '*');
-    } catch (e) {}
-}
-
-function vidIndex(vid) {
-    for (var i = 0; i < state.videos.length; i++) {
-        if (state.videos[i].id === vid) return i;
-    }
-    return -1;
-}
-
-function startKeepAlive(vid, iframe) {
-    stopKeepAlive(vid);
-    ytCmd(iframe, 'playVideo');
-    state.keepAlive[vid] = setInterval(function() {
-        ytCmd(iframe, 'playVideo');
-        var idx = vidIndex(vid);
-        if (idx >= 0 && state.unmutedIndex === idx) {
-            ytCmd(iframe, 'unMute');
-            ytCmd(iframe, 'setVolume', [100]);
+        if (AppState.streams.length === 0) {
+            const emptyMessage = document.createElement('div');
+            emptyMessage.style.cssText = `
+                text-align: center;
+                padding: var(--spacing-3xl) var(--spacing-lg);
+                color: var(--color-text-tertiary);
+                font-size: 13px;
+                font-weight: 500;
+            `;
+            emptyMessage.textContent = 'No active streams';
+            DOM.streamsContainer.appendChild(emptyMessage);
         }
-    }, 8000);
-}
+    },
 
-function stopKeepAlive(vid) {
-    if (state.keepAlive[vid]) {
-        clearInterval(state.keepAlive[vid]);
-        delete state.keepAlive[vid];
-    }
-}
+    createStreamItem(stream, index) {
+        const item = document.createElement('div');
+        item.className = 'stream-item';
+        item.draggable = true;
 
-function stopAllKeepAlive() {
-    for (var k in state.keepAlive) {
-        if (state.keepAlive.hasOwnProperty(k)) {
-            clearInterval(state.keepAlive[k]);
+        const info = document.createElement('div');
+        info.className = 'stream-item-info';
+        info.innerHTML = `
+            <div class="stream-item-name">${stream.name}</div>
+            <div class="stream-item-platform">${stream.platform}</div>
+        `;
+
+        const controls = document.createElement('div');
+        controls.className = 'stream-item-controls';
+
+        const muteBtn = document.createElement('button');
+        muteBtn.className = `control-btn mute-btn ${AppState.muted[index] ? 'muted' : ''}`;
+        muteBtn.setAttribute('aria-label', AppState.muted[index] ? 'Unmute' : 'Mute');
+        muteBtn.innerHTML = AppState.muted[index] 
+            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
+        muteBtn.addEventListener('click', () => {
+            AppState.toggleMute(index);
+            this.renderGrid();
+            this.renderStreamsList();
+        });
+
+        const upBtn = document.createElement('button');
+        upBtn.className = 'control-btn';
+        upBtn.setAttribute('aria-label', 'Move up');
+        upBtn.disabled = index === 0;
+        upBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>`;
+        upBtn.addEventListener('click', () => {
+            AppState.moveStream(index, index - 1);
+            this.renderStreamsList();
+        });
+
+        const downBtn = document.createElement('button');
+        downBtn.className = 'control-btn';
+        downBtn.setAttribute('aria-label', 'Move down');
+        downBtn.disabled = index === AppState.streams.length - 1;
+        downBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>`;
+        downBtn.addEventListener('click', () => {
+            AppState.moveStream(index, index + 1);
+            this.renderStreamsList();
+        });
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'control-btn';
+        removeBtn.setAttribute('aria-label', 'Remove stream');
+        removeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+        removeBtn.addEventListener('click', () => {
+            AppState.removeStream(index);
+            this.renderGrid();
+            this.renderStreamsList();
+            Toast.show('Stream removed', 'info');
+        });
+
+        controls.appendChild(muteBtn);
+        controls.appendChild(upBtn);
+        controls.appendChild(downBtn);
+        controls.appendChild(removeBtn);
+
+        item.appendChild(info);
+        item.appendChild(controls);
+
+        item.addEventListener('dragstart', () => {
+            item.classList.add('dragging');
+            AppState.draggedIndex = index;
+        });
+
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            AppState.draggedIndex = null;
+        });
+
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (AppState.draggedIndex !== null && AppState.draggedIndex !== index) {
+                AppState.moveStream(AppState.draggedIndex, index);
+                AppState.draggedIndex = index;
+                this.renderStreamsList();
+            }
+        });
+
+        return item;
+    },
+};
+
+/* ===== UI MANAGER ===== */
+const UIManager = {
+    openSheet(tab = 'add') {
+        DOM.bottomSheet.classList.add('active');
+        DOM.sheetOverlay.classList.add('active');
+        AppState.isSheetOpen = true;
+        document.body.style.overflow = 'hidden';
+
+        if (tab) {
+            this.switchTab(tab);
         }
-    }
-    state.keepAlive = {};
-}
 
-function setupYTListener() {
-    window.addEventListener('message', function(e) {
-        var data;
+        if (tab === 'add') {
+            DOM.streamUrlInput.focus();
+        }
+    },
+
+    closeSheet() {
+        DOM.bottomSheet.classList.remove('active');
+        DOM.sheetOverlay.classList.remove('active');
+        AppState.isSheetOpen = false;
+        document.body.style.overflow = '';
+    },
+
+    switchTab(tabName) {
+        DOM.sheetTabs.forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.tab === tabName);
+        });
+
+        DOM.tabContents.forEach(content => {
+            content.classList.toggle('active', content.dataset.tabContent === tabName);
+        });
+
+        AppState.selectedTab = tabName;
+    },
+
+    addStream() {
+        const url = DOM.streamUrlInput.value.trim();
+
+        if (!url) {
+            Toast.show('Please enter a stream URL', 'error');
+            return;
+        }
+
         try {
-            data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        } catch (x) { return; }
-        if (!data || data.event !== 'onStateChange') return;
-
-        var info = data.info;
-        if (typeof info === 'object') info = info.playerState;
-
-        if (info === 2 || info === -1) {
-            var iframes = dom.videoGrid.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-                try {
-                    if (iframes[i].contentWindow === e.source) {
-                        ytCmd(iframes[i], 'playVideo');
-                        if (state.unmutedIndex === i) {
-                            ytCmd(iframes[i], 'unMute');
-                            ytCmd(iframes[i], 'setVolume', [100]);
-                        }
-                        break;
-                    }
-                } catch (x) {}
-            }
+            const stream = PlatformDetector.detect(url);
+            AppState.addStream(stream);
+            UIRenderer.renderGrid();
+            UIRenderer.renderStreamsList();
+            DOM.streamUrlInput.value = '';
+            Toast.show(`Added ${stream.name}`, 'success');
+        } catch (error) {
+            Toast.show(error.message, 'error');
         }
-    });
-}
+    },
 
-function setupVisibility() {
-    var resume = function() {
-        var iframes = dom.videoGrid.querySelectorAll('iframe');
-        for (var i = 0; i < state.videos.length; i++) {
-            if (state.videos[i].platform === 'youtube' && iframes[i]) {
-                ytCmd(iframes[i], 'playVideo');
-                if (state.unmutedIndex === i) {
-                    ytCmd(iframes[i], 'unMute');
-                    ytCmd(iframes[i], 'setVolume', [100]);
-                }
-            }
+    clearAllStreams() {
+        if (AppState.streams.length === 0) return;
+
+        if (confirm('Remove all streams?')) {
+            AppState.clearAll();
+            UIRenderer.renderGrid();
+            UIRenderer.renderStreamsList();
+            Toast.show('All streams cleared', 'info');
         }
-    };
-    document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'visible') resume();
-    });
-    window.addEventListener('focus', resume);
-    window.addEventListener('pageshow', resume);
-}
+    },
+};
 
-// ===== CREATE CELL =====
-function createCell(v, i) {
-    var cell = document.createElement('div');
-    cell.className = 'video-cell';
-    if (i === state.activeIndex) cell.className += ' selected';
-    cell.setAttribute('data-idx', i);
+/* ===== TOAST NOTIFICATIONS ===== */
+const Toast = {
+    show(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
 
-    var iframe = document.createElement('iframe');
-    iframe.src = v.embedSrc;
-    iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
-    iframe.setAttribute('allowfullscreen', '');
-    iframe.setAttribute('playsinline', '');
-    iframe.id = 'ifr_' + v.id;
+        const iconMap = {
+            success: `<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
+            error: `<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+            info: `<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+        };
 
-    var selOv = document.createElement('div');
-    selOv.className = 'sel-overlay';
-    selOv.setAttribute('data-idx', i);
+        toast.innerHTML = `${iconMap[type] || ''}<span>${message}</span>`;
+        DOM.toastContainer.appendChild(toast);
 
-    var selNum = document.createElement('div');
-    selNum.className = 'sel-num';
-    selNum.textContent = '' + (i + 1);
+        setTimeout(() => {
+            toast.classList.add('removing');
+            setTimeout(() => toast.remove(), 250);
+        }, 2500);
+    },
+};
 
-    var badge = document.createElement('span');
-    badge.className = 'badge ' + v.platform;
-    badge.textContent = v.platform;
+/* ===== BOTTOM SHEET DRAG HANDLING ===== */
+const BottomSheetDrag = {
+    startY: 0,
+    currentY: 0,
+    isDragging: false,
 
-    cell.appendChild(iframe);
-    cell.appendChild(selOv);
-    cell.appendChild(selNum);
-    cell.appendChild(badge);
+    init() {
+        const sheetHandle = document.querySelector('.sheet-handle');
+        sheetHandle.addEventListener('touchstart', (e) => this.handleTouchStart(e));
+        document.addEventListener('touchmove', (e) => this.handleTouchMove(e));
+        document.addEventListener('touchend', (e) => this.handleTouchEnd(e));
+    },
 
-    if (v.platform === 'youtube') {
-        (function(vid, ifr) {
-            ifr.addEventListener('load', function() {
-                setTimeout(function() {
-                    ytListen(ifr);
-                    startKeepAlive(vid.id, ifr);
-                    var idx = vidIndex(vid.id);
-                    if (idx >= 0 && state.unmutedIndex === idx) {
-                        ytCmd(ifr, 'unMute');
-                        ytCmd(ifr, 'setVolume', [100]);
-                        ytCmd(ifr, 'playVideo');
-                    }
-                }, 2000);
-            });
-        })(v, iframe);
-    }
+    handleTouchStart(e) {
+        this.startY = e.touches[0].clientY;
+        this.currentY = this.startY;
+        this.isDragging = true;
+        DOM.bottomSheet.style.transition = 'none';
+    },
 
-    return cell;
-}
+    handleTouchMove(e) {
+        if (!this.isDragging || !AppState.isSheetOpen) return;
+        
+        this.currentY = e.touches[0].clientY;
+        const deltaY = this.currentY - this.startY;
 
-// ===== RENDER =====
-function fullRender() {
-    stopAllKeepAlive();
-    dom.videoGrid.innerHTML = '';
-
-    var count = state.videos.length;
-    if (count === 0) {
-        dom.emptyState.classList.remove('hidden');
-        dom.videoGrid.style.gridTemplateColumns = '';
-        dom.videoGrid.style.gridTemplateRows = '';
-        return;
-    }
-
-    dom.emptyState.classList.add('hidden');
-
-    if (state.selectMode) {
-        dom.videoGrid.classList.add('select-mode');
-    } else {
-        dom.videoGrid.classList.remove('select-mode');
-    }
-
-    for (var i = 0; i < count; i++) {
-        var cell = createCell(state.videos[i], i);
-        dom.videoGrid.appendChild(cell);
-    }
-
-    applyGrid();
-}
-
-function addVideo(url) {
-    var parsed = parseURL(url);
-    if (!parsed) { toast('Cannot parse URL', true); return false; }
-    var src = buildEmbed(parsed, true);
-    if (!src) { toast('Unsupported', true); return false; }
-
-    state.videos.push({
-        id: 'v' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-        parsed: parsed,
-        platform: parsed.platform,
-        embedSrc: src,
-        isLive: !!parsed.isLive
-    });
-
-    // Append only the new cell
-    var cell = createCell(state.videos[state.videos.length - 1], state.videos.length - 1);
-    dom.videoGrid.appendChild(cell);
-
-    dom.emptyState.classList.add('hidden');
-
-    if (state.selectMode) {
-        dom.videoGrid.classList.add('select-mode');
-    }
-
-    applyGrid();
-    save();
-    toast(parsed.platform + ' added');
-    return true;
-}
-
-function removeVideo(i) {
-    var v = state.videos[i];
-    if (v) stopKeepAlive(v.id);
-    if (state.unmutedIndex === i) state.unmutedIndex = -1;
-    else if (state.unmutedIndex > i) state.unmutedIndex--;
-    state.videos.splice(i, 1);
-    deselect();
-    fullRender();
-    save();
-}
-
-function moveVideo(from, to) {
-    if (to < 0 || to >= state.videos.length) return;
-    if (state.unmutedIndex === from) state.unmutedIndex = to;
-    else if (state.unmutedIndex === to) state.unmutedIndex = from;
-    var v = state.videos.splice(from, 1)[0];
-    state.videos.splice(to, 0, v);
-    state.activeIndex = to;
-    fullRender();
-    highlightSelected(to);
-    save();
-}
-
-function reloadVideo(i) {
-    var iframe = getIframeAt(i);
-    if (!iframe) return;
-    var v = state.videos[i];
-    var muted = (state.unmutedIndex !== i);
-    var src = buildEmbed(v.parsed, muted);
-    iframe.src = '';
-    setTimeout(function() {
-        iframe.src = src;
-        v.embedSrc = src;
-        if (v.platform === 'youtube') {
-            setTimeout(function() {
-                ytListen(iframe);
-                startKeepAlive(v.id, iframe);
-                if (!muted) {
-                    ytCmd(iframe, 'unMute');
-                    ytCmd(iframe, 'setVolume', [100]);
-                }
-            }, 2500);
+        if (deltaY > 0) {
+            const progress = deltaY / window.innerHeight;
+            DOM.bottomSheet.style.transform = `translateY(${deltaY}px)`;
+            DOM.sheetOverlay.style.opacity = Math.max(0, 1 - progress * 2);
         }
-    }, 200);
-    toast('Reloading...');
-}
+    },
 
-function toggleVolume(i) {
-    var v = state.videos[i];
-    if (!v) return;
-    if (state.unmutedIndex === i) {
-        muteVideo(i);
-        state.unmutedIndex = -1;
-        toast('Muted');
-    } else {
-        if (state.unmutedIndex >= 0) muteVideo(state.unmutedIndex);
-        state.unmutedIndex = i;
-        unmuteVideo(i);
-        toast('Unmuted: ' + v.platform);
-    }
-    updateVolBtn();
-    save();
-}
+    handleTouchEnd() {
+        if (!this.isDragging) return;
 
-function muteVideo(i) {
-    var v = state.videos[i];
-    var iframe = getIframeAt(i);
-    if (!iframe || !v) return;
-    if (v.platform === 'youtube') {
-        ytCmd(iframe, 'mute');
-    } else {
-        var src = buildEmbed(v.parsed, true);
-        v.embedSrc = src;
-        iframe.src = src;
-    }
-}
+        const deltaY = this.currentY - this.startY;
+        const threshold = 100;
 
-function unmuteVideo(i) {
-    var v = state.videos[i];
-    var iframe = getIframeAt(i);
-    if (!iframe || !v) return;
-    if (v.platform === 'youtube') {
-        ytCmd(iframe, 'unMute');
-        ytCmd(iframe, 'setVolume', [100]);
-        ytCmd(iframe, 'playVideo');
-    } else {
-        var src = buildEmbed(v.parsed, false);
-        v.embedSrc = src;
-        iframe.src = src;
-    }
-}
+        DOM.bottomSheet.style.transition = `transform var(--transition-base)`;
 
-function getIframeAt(i) {
-    var cells = dom.videoGrid.querySelectorAll('.video-cell');
-    if (cells[i]) return cells[i].querySelector('iframe');
-    return null;
-}
-
-function updateVolBtn() {
-    var btn = dom.actionBar.querySelector('[data-action="volume"]');
-    if (!btn) return;
-    var idx = state.activeIndex;
-    var isOn = (idx >= 0 && state.unmutedIndex === idx);
-    var svg = btn.querySelector('svg');
-    var span = btn.querySelector('span');
-    if (isOn) {
-        btn.classList.add('vol-on');
-        svg.innerHTML = '<path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
-        span.textContent = 'Mute';
-    } else {
-        btn.classList.remove('vol-on');
-        svg.innerHTML = '<path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
-        span.textContent = 'Unmute';
-    }
-}
-
-// ===== SELECT =====
-function enterSelectMode() {
-    state.selectMode = true;
-    state.activeIndex = -1;
-    dom.selectBar.classList.remove('hidden');
-    dom.videoGrid.classList.add('select-mode');
-    dom.selectLabel.textContent = 'Tap a video to select';
-    dom.fab.style.display = 'none';
-}
-
-function exitSelectMode() {
-    state.selectMode = false;
-    state.activeIndex = -1;
-    dom.selectBar.classList.add('hidden');
-    dom.actionBar.classList.add('hidden');
-    dom.videoGrid.classList.remove('select-mode');
-    dom.fab.style.display = '';
-    var c = dom.videoGrid.querySelectorAll('.video-cell');
-    for (var i = 0; i < c.length; i++) c[i].classList.remove('selected');
-}
-
-function selectVideo(idx) {
-    state.activeIndex = idx;
-    highlightSelected(idx);
-    dom.selectLabel.textContent = state.videos[idx].platform + ' #' + (idx + 1) + ' selected';
-    dom.actionBar.classList.remove('hidden');
-    updateVolBtn();
-}
-
-function deselect() {
-    state.activeIndex = -1;
-    dom.actionBar.classList.add('hidden');
-    var c = dom.videoGrid.querySelectorAll('.video-cell');
-    for (var i = 0; i < c.length; i++) c[i].classList.remove('selected');
-    if (state.selectMode) dom.selectLabel.textContent = 'Tap a video to select';
-}
-
-function highlightSelected(idx) {
-    var c = dom.videoGrid.querySelectorAll('.video-cell');
-    for (var i = 0; i < c.length; i++) {
-        if (i === idx) c[i].classList.add('selected');
-        else c[i].classList.remove('selected');
-    }
-}
-
-// ===== MENU =====
-function openMenu() {
-    state.menuOpen = true;
-    dom.menuPanel.classList.remove('hidden');
-    dom.menuOverlay.classList.remove('hidden');
-    dom.fab.classList.add('open');
-    dom.fab.classList.add('show');
-}
-
-function closeMenu() {
-    state.menuOpen = false;
-    dom.menuPanel.classList.add('hidden');
-    dom.menuOverlay.classList.add('hidden');
-    dom.fab.classList.remove('open');
-    dom.fab.classList.remove('show');
-}
-
-function openModal(id) {
-    var el = grab(id);
-    if (el) el.classList.remove('hidden');
-}
-
-function closeModal(id) {
-    var el = grab(id);
-    if (el) el.classList.add('hidden');
-}
-
-function confirmAction(text, cb) {
-    dom.confirmText.textContent = text;
-    state.confirmCb = cb;
-    openModal('confirmModal');
-}
-
-function toast(msg, err) {
-    dom.toastBox.innerHTML = '';
-    var el = document.createElement('div');
-    el.className = 'toast' + (err ? ' err' : '');
-    el.textContent = msg;
-    dom.toastBox.appendChild(el);
-    setTimeout(function() {
-        if (el.parentNode) el.remove();
-    }, 2500);
-}
-
-function save() {
-    try {
-        localStorage.setItem('mp9', JSON.stringify({
-            videos: state.videos,
-            layoutId: state.layoutId,
-            unmutedIndex: state.unmutedIndex
-        }));
-    } catch (e) {}
-}
-
-function load() {
-    try {
-        var d = JSON.parse(localStorage.getItem('mp9'));
-        if (d) {
-            if (d.videos) state.videos = d.videos;
-            if (d.layoutId) state.layoutId = d.layoutId;
-            if (typeof d.unmutedIndex === 'number') state.unmutedIndex = d.unmutedIndex;
-            if (state.unmutedIndex >= state.videos.length) state.unmutedIndex = -1;
-        }
-    } catch (e) {}
-}
-
-// ===== LAYOUT PICKER =====
-function buildLayoutPicker() {
-    dom.layoutGrid.innerHTML = '';
-    for (var i = 0; i < LAYOUTS.length; i++) {
-        var L = LAYOUTS[i];
-        var btn = document.createElement('button');
-        btn.className = 'lay-opt';
-        if (L.id === state.layoutId) btn.className += ' active';
-        btn.setAttribute('data-layout', L.id);
-        btn.type = 'button';
-
-        var preview = document.createElement('div');
-        preview.className = 'lay-preview';
-        preview.style.gridTemplateColumns = 'repeat(' + L.cols + ',1fr)';
-        preview.style.gridTemplateRows = 'repeat(' + L.rows + ',1fr)';
-
-        for (var j = 0; j < L.cells.length; j++) {
-            var c = L.cells[j];
-            var d = document.createElement('div');
-            d.style.gridColumn = (c[0] + 1) + ' / span ' + c[2];
-            d.style.gridRow = (c[1] + 1) + ' / span ' + c[3];
-            preview.appendChild(d);
-        }
-
-        var span = document.createElement('span');
-        span.textContent = L.name;
-
-        btn.appendChild(preview);
-        btn.appendChild(span);
-        dom.layoutGrid.appendChild(btn);
-    }
-}
-
-// ===== WIRE =====
-function wire() {
-    // FAB touch/mouse reveal
-    document.addEventListener('touchstart', function() {
-        if (state.videos.length > 0 && !state.selectMode) flashFab();
-    }, {passive: true});
-
-    document.addEventListener('mousemove', function() {
-        if (state.videos.length > 0 && !state.selectMode) flashFab();
-    });
-
-    // FAB click
-    dom.fab.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (state.menuOpen) {
-            closeMenu();
+        if (deltaY > threshold) {
+            UIManager.closeSheet();
         } else {
-            openMenu();
+            DOM.bottomSheet.style.transform = 'translateY(0)';
+            DOM.sheetOverlay.style.opacity = '1';
+        }
+
+        this.isDragging = false;
+    },
+};
+
+/* ===== EVENT LISTENERS ===== */
+function initEventListeners() {
+    DOM.fab.addEventListener('click', () => UIManager.openSheet('add'));
+
+    DOM.sheetOverlay.addEventListener('click', () => UIManager.closeSheet());
+
+    DOM.sheetTabs.forEach(tab => {
+        tab.addEventListener('click', () => UIManager.switchTab(tab.dataset.tab));
+    });
+
+    DOM.streamUrlInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            UIManager.addStream();
         }
     });
 
-    // Menu overlay
-    dom.menuOverlay.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        closeMenu();
+    DOM.inputClearBtn.addEventListener('click', () => {
+        DOM.streamUrlInput.value = '';
+        DOM.streamUrlInput.focus();
     });
 
-    // Menu items
-    dom.menuPanel.addEventListener('click', function(e) {
-        var item = e.target;
-        while (item && item !== dom.menuPanel) {
-            if (item.classList && item.classList.contains('menu-item')) break;
-            item = item.parentElement;
-        }
-        if (!item || !item.classList || !item.classList.contains('menu-item')) return;
+    DOM.addStreamBtn.addEventListener('click', () => UIManager.addStream());
+    DOM.clearAllBtn.addEventListener('click', () => UIManager.clearAllStreams());
 
-        e.preventDefault();
-        e.stopPropagation();
-
-        var action = item.getAttribute('data-action');
-        closeMenu();
-
-        switch (action) {
-            case 'add':
-                openModal('addModal');
-                dom.urlInput.value = '';
-                setTimeout(function() { dom.urlInput.focus(); }, 250);
-                break;
-            case 'layout':
-                buildLayoutPicker();
-                openModal('layoutModal');
-                break;
-            case 'select':
-                if (state.videos.length === 0) { toast('No videos', true); return; }
-                enterSelectMode();
-                break;
-            case 'clearall':
-                if (state.videos.length === 0) { toast('Nothing to clear', true); return; }
-                confirmAction('Remove all ' + state.videos.length + ' videos?', function() {
-                    stopAllKeepAlive();
-                    state.videos = [];
-                    state.activeIndex = -1;
-                    state.unmutedIndex = -1;
-                    exitSelectMode();
-                    fullRender();
-                    save();
-                    toast('All cleared');
-                });
-                break;
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && AppState.isSheetOpen) {
+            UIManager.closeSheet();
         }
     });
 
-    // Add modal
-    dom.closeAddModal.addEventListener('click', function(e) {
-        e.preventDefault();
-        closeModal('addModal');
-    });
-    dom.addModal.querySelector('.modal-bg').addEventListener('click', function() {
-        closeModal('addModal');
-    });
-
-    // Paste
-    dom.pasteBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        if (navigator.clipboard && navigator.clipboard.readText) {
-            navigator.clipboard.readText().then(function(t) {
-                dom.urlInput.value = t;
-            }).catch(function() {
-                toast('Clipboard denied', true);
-            });
+    document.addEventListener('touchmove', (e) => {
+        if (AppState.isSheetOpen && !e.target.closest('.sheet-content')) {
+            e.preventDefault();
         }
-    });
+    }, { passive: false });
 
-    // Submit video
-    dom.submitVideo.addEventListener('click', function(e) {
-        e.preventDefault();
-        var url = dom.urlInput.value.trim();
-        if (!url) { toast('Enter a URL', true); return; }
-        if (addVideo(url)) closeModal('addModal');
-    });
-
-    dom.urlInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') { e.preventDefault(); dom.submitVideo.click(); }
-    });
-
-    // Layout modal
-    dom.closeLayoutModal.addEventListener('click', function(e) {
-        e.preventDefault();
-        closeModal('layoutModal');
-    });
-    dom.layoutModal.querySelector('.modal-bg').addEventListener('click', function() {
-        closeModal('layoutModal');
-    });
-
-    // Layout selection
-    dom.layoutGrid.addEventListener('click', function(e) {
-        var opt = e.target;
-        while (opt && opt !== dom.layoutGrid) {
-            if (opt.classList && opt.classList.contains('lay-opt')) break;
-            opt = opt.parentElement;
+    window.addEventListener('storage', (e) => {
+        if (e.key === 'streamsync_streams' || e.key === 'streamsync_muted') {
+            AppState.init();
+            UIRenderer.renderGrid();
+            UIRenderer.renderStreamsList();
         }
-        if (!opt || !opt.classList || !opt.classList.contains('lay-opt')) return;
-
-        e.preventDefault();
-        e.stopPropagation();
-
-        state.layoutId = opt.getAttribute('data-layout');
-
-        // Update active state
-        var opts = dom.layoutGrid.querySelectorAll('.lay-opt');
-        for (var i = 0; i < opts.length; i++) {
-            if (opts[i].getAttribute('data-layout') === state.layoutId) {
-                opts[i].classList.add('active');
-            } else {
-                opts[i].classList.remove('active');
-            }
-        }
-
-        applyGrid();
-        save();
-        closeModal('layoutModal');
-    });
-
-    // Confirm modal
-    dom.confirmNo.addEventListener('click', function(e) {
-        e.preventDefault();
-        closeModal('confirmModal');
-        state.confirmCb = null;
-    });
-    dom.confirmModal.querySelector('.modal-bg').addEventListener('click', function() {
-        closeModal('confirmModal');
-        state.confirmCb = null;
-    });
-    dom.confirmYes.addEventListener('click', function(e) {
-        e.preventDefault();
-        closeModal('confirmModal');
-        if (state.confirmCb) {
-            var cb = state.confirmCb;
-            state.confirmCb = null;
-            cb();
-        }
-    });
-
-    // Exit select
-    dom.exitSelect.addEventListener('click', function(e) {
-        e.preventDefault();
-        exitSelectMode();
-    });
-
-    // Grid tap (select mode)
-    dom.videoGrid.addEventListener('click', function(e) {
-        if (!state.selectMode) return;
-        var el = e.target;
-        while (el && el !== dom.videoGrid) {
-            if (el.classList && el.classList.contains('sel-overlay')) {
-                e.preventDefault();
-                e.stopPropagation();
-                var idx = parseInt(el.getAttribute('data-idx'), 10);
-                if (state.activeIndex === idx) deselect();
-                else selectVideo(idx);
-                return;
-            }
-            el = el.parentElement;
-        }
-    });
-
-    // Action bar
-    dom.actionBar.addEventListener('click', function(e) {
-        var el = e.target;
-        var btn = null;
-        while (el && el !== dom.actionBar) {
-            if (el.classList && el.classList.contains('act-btn')) { btn = el; break; }
-            el = el.parentElement;
-        }
-        if (!btn) return;
-        e.preventDefault();
-        e.stopPropagation();
-
-        var action = btn.getAttribute('data-action');
-        var idx = state.activeIndex;
-
-        switch (action) {
-            case 'volume':
-                if (idx >= 0) toggleVolume(idx);
-                break;
-            case 'move-left':
-                if (idx > 0) moveVideo(idx, idx - 1);
-                break;
-            case 'move-right':
-                if (idx < state.videos.length - 1) moveVideo(idx, idx + 1);
-                break;
-            case 'reload':
-                if (idx >= 0) reloadVideo(idx);
-                break;
-            case 'remove':
-                if (idx >= 0) {
-                    var name = state.videos[idx].platform + ' #' + (idx + 1);
-                    confirmAction('Remove ' + name + '?', function() {
-                        removeVideo(idx);
-                        toast('Removed');
-                    });
-                }
-                break;
-            case 'deselect':
-                deselect();
-                break;
-        }
-    });
-
-    // Keyboard
-    document.addEventListener('keydown', function(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-        if (e.key === 'Escape') {
-            if (!dom.addModal.classList.contains('hidden')) { closeModal('addModal'); return; }
-            if (!dom.layoutModal.classList.contains('hidden')) { closeModal('layoutModal'); return; }
-            if (!dom.confirmModal.classList.contains('hidden')) { closeModal('confirmModal'); return; }
-            if (state.selectMode) { exitSelectMode(); return; }
-            if (state.menuOpen) { closeMenu(); return; }
-        }
-    });
-
-    // Resize
-    var resizeTimer;
-    window.addEventListener('resize', function() {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(function() {
-            if (state.videos.length > 0) sizeIframes();
-        }, 150);
-    });
-
-    window.addEventListener('orientationchange', function() {
-        setTimeout(function() {
-            if (state.videos.length > 0) sizeIframes();
-        }, 350);
     });
 }
 
-// ===== BOOT =====
-function boot() {
-    initDom();
-    load();
-    fullRender();
-    wire();
-    setupYTListener();
-    setupVisibility();
+/* ===== INITIALIZATION ===== */
+function init() {
+    AppState.init();
+    UIRenderer.renderGrid();
+    UIRenderer.renderStreamsList();
+    BottomSheetDrag.init();
+    initEventListeners();
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            AppState.init();
+            UIRenderer.renderGrid();
+            UIRenderer.renderStreamsList();
+        }
+    });
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot);
-} else {
-    boot();
-}
-
-})();
+document.readyState === 'loading' 
+    ? document.addEventListener('DOMContentLoaded', init) 
+    : init();
