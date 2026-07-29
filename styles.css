@@ -22,26 +22,40 @@ button{cursor:pointer;font-family:inherit}
 /* ====== FAB ====== */
 .fab{
     position:fixed;
-    top:calc(var(--st) + 10px);
-    right:calc(var(--sr) + 10px);
-    z-index:300;width:42px;height:42px;
-    border:none;border-radius:50%;
+    top:0;right:0;
+    z-index:300;width:50px;height:50px;
+    border:none;border-radius:0;
+    background:transparent;
+    color:transparent;
+    display:flex;align-items:center;justify-content:center;
+    transition:background .3s,color .3s,opacity .3s;
+    opacity:0;
+    pointer-events:none;
+}
+.fab:active{transform:scale(.9)}
+.fab.visible{
+    opacity:1;
+    pointer-events:auto;
     background:rgba(255,255,255,.1);
     backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-    color:#fff;display:flex;align-items:center;justify-content:center;
-    box-shadow:0 2px 12px rgba(0,0,0,.4);
-    transition:transform .2s,background .2s;
+    color:#fff;
+    border-radius:0 0 0 12px;
 }
-.fab:active{transform:scale(.85)}
-.fab.open{background:var(--accent);transform:rotate(90deg)}
+.fab.open{
+    opacity:1;
+    pointer-events:auto;
+    background:var(--accent);
+    color:#fff;
+    border-radius:0 0 0 12px;
+}
 .fab svg{width:22px;height:22px}
 
 /* ====== MENU ====== */
 .menu-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:290;background:rgba(0,0,0,.35)}
 .menu-overlay.hidden{display:none}
 .menu-panel{
-    position:fixed;top:calc(var(--st) + 58px);right:calc(var(--sr) + 10px);
-    z-index:310;background:var(--s1);border-radius:14px;
+    position:fixed;top:50px;right:0;
+    z-index:310;background:var(--s1);border-radius:0 0 0 14px;
     overflow:hidden;min-width:175px;
     box-shadow:0 8px 32px rgba(0,0,0,.6);
     animation:menuIn .18s ease;
@@ -64,7 +78,6 @@ button{cursor:pointer;font-family:inherit}
     overflow:hidden;
 }
 
-/* The grid container - sized by JS to fit perfectly */
 .video-grid{
     display:grid;gap:0;overflow:hidden;
 }
@@ -80,7 +93,6 @@ button{cursor:pointer;font-family:inherit}
     border:none;display:block;
 }
 
-/* Select overlay */
 .video-cell .sel-overlay{
     position:absolute;top:0;left:0;right:0;bottom:0;
     z-index:20;cursor:pointer;background:transparent;display:none;
@@ -88,7 +100,6 @@ button{cursor:pointer;font-family:inherit}
 .select-mode .video-cell .sel-overlay{display:block}
 .select-mode .video-cell:active .sel-overlay{background:rgba(231,76,60,.12)}
 
-/* Selected border */
 .video-cell.selected::before{
     content:'';position:absolute;top:0;left:0;right:0;bottom:0;
     border:3px solid var(--sel);z-index:25;pointer-events:none;
@@ -114,8 +125,6 @@ button{cursor:pointer;font-family:inherit}
 .badge.twitch{background:var(--tw);color:#fff}
 .badge.rumble{background:var(--ru);color:#000}
 .badge.kick{background:var(--ki);color:#000}
-
-.video-cell.featured-main{grid-column:1/-1}
 
 /* ====== EMPTY ====== */
 .empty-state{
@@ -232,7 +241,6 @@ button{cursor:pointer;font-family:inherit}
 }
 .submit-btn:active{transform:scale(.98);background:var(--accent2)}
 
-/* ====== LAYOUT ====== */
 .layout-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .lay-opt{
     display:flex;flex-direction:column;align-items:center;gap:7px;
@@ -251,7 +259,6 @@ button{cursor:pointer;font-family:inherit}
 .t2x1 .wide{grid-column:1/-1}
 .tauto{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
 
-/* ====== CONFIRM ====== */
 .confirm-text{font-size:16px;font-weight:600;text-align:center;margin-bottom:20px;padding:0 10px}
 .confirm-btns{display:flex;gap:10px}
 .conf-btn{flex:1;padding:14px;border:none;border-radius:12px;font-size:14px;font-weight:700}
@@ -259,7 +266,6 @@ button{cursor:pointer;font-family:inherit}
 .conf-btn.yes{background:var(--danger);color:#fff}
 .conf-btn:active{transform:scale(.97)}
 
-/* ====== TOAST ====== */
 #toastBox{
     position:fixed;bottom:calc(var(--sb) + 80px);
     left:50%;transform:translateX(-50%);z-index:700;pointer-events:none;
