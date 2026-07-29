@@ -19,7 +19,6 @@ function initDom(){
     dom.pasteBtn=grab('pasteBtn');dom.toastBox=grab('toastBox');
 }
 
-// ===== FAB =====
 function flashFab(){
     dom.fab.classList.add('show');
     clearTimeout(state.fabTimer);
@@ -27,7 +26,6 @@ function flashFab(){
 }
 
 // ===== SIZING =====
-// Uses flexbox with exact pixel sizes per cell - no CSS grid gaps possible
 function sizeGrid(){
     var count=state.videos.length;
     if(count===0)return;
@@ -36,8 +34,9 @@ function sizeGrid(){
     var layout=state.layout;
     var cells=dom.videoGrid.querySelectorAll('.video-cell');
 
-    // Determine grid structure
-    var cols,rows;
+    var positions=[]; // {x, y, w, h} for each cell
+
+    var cols;
     switch(layout){
         case'1':cols=1;break;
         case'2':cols=2;break;
@@ -48,60 +47,93 @@ function sizeGrid(){
     }
 
     if(layout==='2x1'&&count>1){
-        // Featured: top = full width 16:9, bottom = half width 16:9 each
         var botCount=count-1;
         var botRows=Math.ceil(botCount/2);
-
-        // topH = W/AR, botCellH = (W/2)/AR = W/(2*AR)
-        // totalH = W/AR + botRows * W/(2*AR) = W/AR * (1 + botRows/2)
         var factor=1+botRows/2;
+
         var gw=vw;
         var gh=gw/AR*factor;
-        if(gh>vh){gh=vh;gw=gh*AR/factor}
+        if(gh>vh){gh=vh;gw=gh*AR/factor;}
 
-        gw=Math.floor(gw);
-        var topH=Math.floor(gw/AR);
-        var botCellW=Math.floor(gw/2);
-        var botCellH=Math.floor(botCellW/AR);
+        var topH=gw/AR;
+        var botCellW=gw/2;
+        var botCellH=botCellW/AR;
         gh=topH+botRows*botCellH;
 
-        dom.videoGrid.style.width=gw+'px';
-        dom.videoGrid.style.height=gh+'px';
+        var offX=(vw-gw)/2;
+        var offY=(vh-gh)/2;
 
-        // Size each cell
+        // Top cell
+        positions.push({x:offX,y:offY,w:gw,h:topH});
+
+        // Bottom cells
+        for(var i=1;i<count;i++){
+            var bi=i-1;
+            var row=Math.floor(bi/2);
+            var col=bi%2;
+            positions.push({
+                x:offX+col*botCellW,
+                y:offY+topH+row*botCellH,
+                w:botCellW,
+                h:botCellH
+            });
+        }
+
+        dom.videoGrid.style.width=vw+'px';
+        dom.videoGrid.style.height=vh+'px';
+
         for(var i=0;i<cells.length;i++){
-            if(i===0){
-                cells[i].style.width=gw+'px';
-                cells[i].style.height=topH+'px';
-            } else {
-                cells[i].style.width=botCellW+'px';
-                cells[i].style.height=botCellH+'px';
-            }
+            var p=positions[i];
+            if(!p)continue;
+            cells[i].style.position='absolute';
+            cells[i].style.left=p.x+'px';
+            cells[i].style.top=p.y+'px';
+            cells[i].style.width=p.w+'px';
+            cells[i].style.height=p.h+'px';
         }
         return;
     }
 
-    rows=Math.max(1,Math.ceil(count/cols));
+    var rows=Math.max(1,Math.ceil(count/cols));
 
-    // Calculate cell size maintaining 16:9
-    var cellW=Math.floor(vw/cols);
-    var cellH=Math.floor(cellW/AR);
-    var gw=cellW*cols;
+    // Calculate cell size
+    var cellW=vw/cols;
+    var cellH=cellW/AR;
+    var gw=vw;
     var gh=cellH*rows;
 
     if(gh>vh){
-        cellH=Math.floor(vh/rows);
-        cellW=Math.floor(cellH*AR);
+        cellH=vh/rows;
+        cellW=cellH*AR;
         gw=cellW*cols;
-        gh=cellH*rows;
+        gh=vh;
     }
 
-    dom.videoGrid.style.width=gw+'px';
-    dom.videoGrid.style.height=gh+'px';
+    var offX=(vw-gw)/2;
+    var offY=(vh-gh)/2;
+
+    for(var i=0;i<count;i++){
+        var row=Math.floor(i/cols);
+        var col=i%cols;
+        positions.push({
+            x:offX+col*cellW,
+            y:offY+row*cellH,
+            w:cellW,
+            h:cellH
+        });
+    }
+
+    dom.videoGrid.style.width=vw+'px';
+    dom.videoGrid.style.height=vh+'px';
 
     for(var i=0;i<cells.length;i++){
-        cells[i].style.width=cellW+'px';
-        cells[i].style.height=cellH+'px';
+        var p=positions[i];
+        if(!p)continue;
+        cells[i].style.position='absolute';
+        cells[i].style.left=p.x+'px';
+        cells[i].style.top=p.y+'px';
+        cells[i].style.width=p.w+'px';
+        cells[i].style.height=p.h+'px';
     }
 }
 
@@ -297,7 +329,6 @@ function render(){
             },2000)});
         })(v,iframe)}
     }
-
     requestAnimationFrame(function(){sizeGrid()});
 }
 
@@ -315,8 +346,8 @@ function openModal(id){var el=grab(id);if(el)el.classList.remove('hidden')}
 function closeModal(id){var el=grab(id);if(el)el.classList.add('hidden')}
 function confirmAction(text,cb){dom.confirmText.textContent=text;state.confirmCb=cb;openModal('confirmModal')}
 function toast(msg,err){dom.toastBox.innerHTML='';var el=document.createElement('div');el.className='toast'+(err?' err':'');el.textContent=msg;dom.toastBox.appendChild(el);setTimeout(function(){if(el.parentNode)el.remove()},2500)}
-function save(){try{localStorage.setItem('mp6',JSON.stringify({videos:state.videos,layout:state.layout,unmutedIndex:state.unmutedIndex}))}catch(e){}}
-function load(){try{var d=JSON.parse(localStorage.getItem('mp6'));if(d){if(d.videos)state.videos=d.videos;if(d.layout)state.layout=d.layout;if(typeof d.unmutedIndex==='number')state.unmutedIndex=d.unmutedIndex;if(state.unmutedIndex>=state.videos.length)state.unmutedIndex=-1}}catch(e){}}
+function save(){try{localStorage.setItem('mp7',JSON.stringify({videos:state.videos,layout:state.layout,unmutedIndex:state.unmutedIndex}))}catch(e){}}
+function load(){try{var d=JSON.parse(localStorage.getItem('mp7'));if(d){if(d.videos)state.videos=d.videos;if(d.layout)state.layout=d.layout;if(typeof d.unmutedIndex==='number')state.unmutedIndex=d.unmutedIndex;if(state.unmutedIndex>=state.videos.length)state.unmutedIndex=-1}}catch(e){}}
 function refreshLayOpts(){var o=document.querySelectorAll('.lay-opt');for(var i=0;i<o.length;i++){if(o[i].getAttribute('data-layout')===state.layout)o[i].classList.add('active');else o[i].classList.remove('active')}}
 
 // ===== WIRE =====

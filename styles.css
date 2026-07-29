@@ -58,16 +58,18 @@ button{cursor:pointer;font-family:inherit}
     overflow:hidden;background:#000;
 }
 
-/* ====== VIDEO GRID (sized by JS to exact pixel dimensions) ====== */
+/* ====== VIDEO GRID (container for absolutely positioned cells) ====== */
 .video-grid{
-    display:flex;flex-wrap:wrap;
+    position:relative;
     overflow:hidden;
 }
 
-/* ====== VIDEO CELL (sized by JS with exact pixel w/h) ====== */
+/* ====== VIDEO CELL (absolutely positioned by JS) ====== */
 .video-cell{
-    position:relative;overflow:hidden;background:#000;
-    flex-shrink:0;flex-grow:0;
+    position:absolute;overflow:hidden;background:#000;
+}
+
+
 }
 .video-cell iframe{
     position:absolute;top:0;left:0;
